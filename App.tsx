@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { HashRouter as Router } from 'react-router-dom';
 import Navbar from './components/Navbar';
@@ -13,48 +14,6 @@ import CommentPage from './components/CommentPage';
 import { ICONS } from './constants';
 import { Post, User, Comment, Story } from './types';
 import { supabase } from './lib/supabase';
-
-interface Alert {
-  id: string;
-  type: 'like' | 'comment' | 'follow' | 'message';
-  user: { id: string; username: string; avatar: string };
-  content?: string;
-  postId?: string;
-  timestamp: string;
-  read: boolean;
-}
-
-const FollowListModal: React.FC<{ 
-  title: string; 
-  users: User[]; 
-  onClose: () => void; 
-  onUserClick: (user: User) => void;
-}> = ({ title, users, onClose, onUserClick }) => (
-  <div className="fixed inset-0 z-[700] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-in fade-in duration-200">
-    <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-[2.5rem] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[70vh]">
-      <div className="p-6 border-b dark:border-slate-800 flex items-center justify-between">
-        <h3 className="text-xl font-black">{title}</h3>
-        <button onClick={onClose} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full">✕</button>
-      </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-2 no-scrollbar">
-        {users.length > 0 ? users.map(u => (
-          <div key={u.id} onClick={() => { onUserClick(u); onClose(); }} className="flex items-center space-x-4 p-3 hover:bg-gray-50 dark:hover:bg-slate-800 rounded-2xl cursor-pointer transition-colors group">
-            <img src={u.avatar} className="w-12 h-12 rounded-full object-cover border border-gray-100 dark:border-slate-700" alt="" />
-            <div className="flex-1">
-              <p className="font-bold text-sm group-hover:text-brand-primary transition-colors">{u.fullName}</p>
-              <p className="text-xs text-gray-400">@{u.username}</p>
-            </div>
-          </div>
-        )) : (
-          <div className="py-12 text-center opacity-40">
-            <ICONS.Friends className="w-12 h-12 mx-auto mb-2" />
-            <p className="font-bold text-sm">No users found</p>
-          </div>
-        )}
-      </div>
-    </div>
-  </div>
-);
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -85,46 +44,64 @@ const App: React.FC = () => {
   const [selectedPostDetail, setSelectedPostDetail] = useState<Post | null>(null);
   const [showMenu, setShowMenu] = useState(false);
   
-  const [viewingUser, setViewingUser] = useState<User | null>(null);
-  const [showFollowList, setShowFollowList] = useState<{ title: string; type: 'following' | 'followers' } | null>(null);
-  
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  
   const [selectedChatUser, setSelectedChatUser] = useState<User | null>(null);
   const [chatMessages, setChatMessages] = useState<{id: string, sender_id: string, text: string, created_at: string}[]>([]);
   const [messageInput, setMessageInput] = useState('');
   const [chatSearchQuery, setChatSearchQuery] = useState('');
-  const [chatSearchResults, setChatSearchResults] = useState<User[]>([]);
   const [isSearchingChat, setIsSearchingChat] = useState(false);
+  const [chatSearchResults, setChatSearchResults] = useState<User[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [conversations, setConversations] = useState<User[]>([]);
 
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
-  const [isCommunityLoading, setIsCommunityLoading] = useState(false);
-
+  
   const [stories, setStories] = useState<Story[]>([]);
   const [activeStory, setActiveStory] = useState<Story | null>(null);
 
   const STORY_TTL = 24 * 60 * 60 * 1000;
 
+  // Real-time Search Logic: name, username, or mobile
   useEffect(() => {
-    if (currentUser && 'Notification' in window) {
-      if (Notification.permission === 'default') {
-        Notification.requestPermission();
+    const searchUsers = async () => {
+      const query = chatSearchQuery.trim();
+      if (!query) {
+        setChatSearchResults([]);
+        return;
       }
-    }
-  }, [currentUser]);
 
-  const addLocalAlert = (alert: Omit<Alert, 'id' | 'timestamp' | 'read'>) => {
-    const newAlert: Alert = {
-      ...alert,
-      id: Math.random().toString(36).substr(2, 9),
-      timestamp: 'Just now',
-      read: false
+      setIsSearchingChat(true);
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .or(`full_name.ilike.%${query}%,username.ilike.%${query}%,mobile.ilike.%${query}%`)
+          .neq('id', currentUser?.id)
+          .limit(12);
+
+        if (!error && data) {
+          setChatSearchResults(data.map(u => ({
+            id: u.id,
+            username: u.username,
+            fullName: u.full_name,
+            mobile: u.mobile,
+            avatar: u.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.username}`,
+            bio: u.bio,
+            work: u.work,
+            location: u.location,
+            website: u.website
+          })));
+        }
+      } catch (err) {
+        console.error("Search error:", err);
+      } finally {
+        setIsSearchingChat(false);
+      }
     };
-    setAlerts(prev => [newAlert, ...prev]);
-  };
+
+    const timer = setTimeout(searchUsers, 350);
+    return () => clearTimeout(timer);
+  }, [chatSearchQuery, currentUser?.id]);
 
   useEffect(() => {
     if (chatEndRef.current) {
@@ -171,11 +148,9 @@ const App: React.FC = () => {
           setSessionLoading(false);
         }
       } catch (err) {
-        console.error("Session check error:", err);
         setSessionLoading(false);
       }
     };
-
     checkSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
@@ -186,24 +161,21 @@ const App: React.FC = () => {
         setSessionLoading(false);
       }
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
   const fetchProfile = async (userId: string) => {
     try {
       const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
-      
       if (error || !data) {
-        console.warn("Profile not found or error fetching profile.");
         setSessionLoading(false);
         return;
       }
-
       const user: User = {
         id: data.id, 
         username: data.username, 
         fullName: data.full_name,
+        mobile: data.mobile,
         avatar: data.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.username}`,
         coverPhoto: data.cover_photo_url || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop',
         bio: data.bio || "Sharing light on Lumina ✨",
@@ -211,11 +183,10 @@ const App: React.FC = () => {
         location: data.location, 
         website: data.website
       };
-      
       setCurrentUser(user);
       localStorage.setItem('lumina_user', JSON.stringify(user));
     } catch (err) {
-      console.error("Error in fetchProfile:", err);
+      console.error(err);
     } finally {
       setSessionLoading(false);
     }
@@ -272,10 +243,8 @@ const App: React.FC = () => {
     const isAlreadySaved = savedIds.includes(postId);
     if (isAlreadySaved) {
       savedIds = savedIds.filter((id: string) => id !== postId);
-      setToast({ message: 'Removed from Saved', type: 'success' });
     } else {
       savedIds.push(postId);
-      setToast({ message: 'Added to your circle!', type: 'success' });
     }
     localStorage.setItem(storageKey, JSON.stringify(savedIds));
     setPosts(prev => prev.map(p => p.id === postId ? { ...p, isSaved: !isAlreadySaved } : p));
@@ -283,24 +252,19 @@ const App: React.FC = () => {
 
   const fetchCommunityUsers = async () => {
     if (!currentUser) return;
-    setIsCommunityLoading(true);
-    const { data, error } = await supabase.from('profiles').select('*').neq('id', currentUser.id).limit(50);
+    const { data, error } = await supabase.from('profiles').select('*').neq('id', currentUser.id).limit(20);
     if (!error && data) {
       setAllUsers(data.map(u => ({ id: u.id, username: u.username, fullName: u.full_name, avatar: u.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.username}`, bio: u.bio })));
     }
     const localFollowing = JSON.parse(localStorage.getItem(`lumina_following_${currentUser.id}`) || '[]');
     setFollowingIds(new Set(localFollowing));
-    setIsCommunityLoading(false);
   };
 
   const toggleFollow = (userId: string) => {
     if (!currentUser) return;
     const newFollowing = new Set(followingIds);
-    if (newFollowing.has(userId)) {
-      newFollowing.delete(userId);
-    } else {
-      newFollowing.add(userId);
-    }
+    if (newFollowing.has(userId)) newFollowing.delete(userId);
+    else newFollowing.add(userId);
     setFollowingIds(newFollowing);
     localStorage.setItem(`lumina_following_${currentUser.id}`, JSON.stringify(Array.from(newFollowing)));
   };
@@ -340,20 +304,14 @@ const App: React.FC = () => {
       await fetchProfile(currentUser.id); 
       setToast({ message: 'Identity Refreshed!', type: 'success' }); 
     }
-    else setToast({ message: 'Failed to update identity.', type: 'error' });
   };
 
   const handlePostStory = async (imageUrl: string) => {
     if (!currentUser) return;
-    const { error } = await supabase.from('stories').insert({
-      user_id: currentUser.id,
-      image_url: imageUrl,
-    });
+    const { error } = await supabase.from('stories').insert({ user_id: currentUser.id, image_url: imageUrl });
     if (!error) {
       await fetchStories();
       setToast({ message: 'Story posted!', type: 'success' });
-    } else {
-      setToast({ message: 'Failed to post story.', type: 'error' });
     }
   };
 
@@ -362,41 +320,39 @@ const App: React.FC = () => {
     setAuthError('');
     setIsSubmittingAuth(true);
     const proxyEmail = `${authFormData.mobile}@lumina.app`;
-    
     try {
       if (isRegistering) {
-        if (authFormData.password !== authFormData.confirmPassword) { 
-          setAuthError('Passwords do not match'); 
-          setIsSubmittingAuth(false); 
-          return; 
-        }
+        if (authFormData.password !== authFormData.confirmPassword) { setAuthError('Passwords do not match'); setIsSubmittingAuth(false); return; }
         const { data, error } = await supabase.auth.signUp({ email: proxyEmail, password: authFormData.password });
         if (error) setAuthError(error.message);
         else if (data.user) {
           const username = authFormData.fullName.toLowerCase().replace(/\s+/g, '_') + Math.floor(Math.random() * 100);
-          await supabase.from('profiles').insert({ 
-            id: data.user.id, 
-            username, 
-            full_name: authFormData.fullName, 
-            mobile: authFormData.mobile, 
-            dob: authFormData.dob, 
-            avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}` 
-          });
-          setToast({ message: 'Registration successful!', type: 'success' });
+          await supabase.from('profiles').insert({ id: data.user.id, username, full_name: authFormData.fullName, mobile: authFormData.mobile, dob: authFormData.dob, avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}` });
           await fetchProfile(data.user.id);
         }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({ email: proxyEmail, password: authFormData.password });
         if (error) setAuthError('Invalid credentials');
-        else if (data.user) {
-          await fetchProfile(data.user.id);
-        }
+        else if (data.user) await fetchProfile(data.user.id);
       }
     } catch (err) {
-      console.error("Auth error:", err);
       setAuthError("An unexpected error occurred.");
     } finally {
       setIsSubmittingAuth(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await supabase.auth.signOut();
+      setCurrentUser(null);
+      localStorage.removeItem('lumina_user');
+      setShowMenu(false);
+      setToast({ message: 'Logged out safely. See you soon!', type: 'success' });
+      setActiveTab('home');
+    } catch (error) {
+      console.error("Logout failed:", error);
+      setToast({ message: 'Failed to log out. Try again.', type: 'error' });
     }
   };
 
@@ -406,11 +362,8 @@ const App: React.FC = () => {
     if (!post) return;
     const isCurrentlyLiked = post.isLiked;
     setPosts(prev => prev.map(p => p.id === postId ? { ...p, isLiked: !isCurrentlyLiked, likes: isCurrentlyLiked ? p.likes - 1 : p.likes + 1 } : p));
-    if (!isCurrentlyLiked) {
-      await supabase.from('post_likes').insert({ post_id: postId, user_id: currentUser.id });
-    } else {
-      await supabase.from('post_likes').delete().eq('post_id', postId).eq('user_id', currentUser.id);
-    }
+    if (!isCurrentlyLiked) await supabase.from('post_likes').insert({ post_id: postId, user_id: currentUser.id });
+    else await supabase.from('post_likes').delete().eq('post_id', postId).eq('user_id', currentUser.id);
   };
 
   const handleTabChange = (tab: string) => {
@@ -430,65 +383,36 @@ const App: React.FC = () => {
   if (sessionLoading) return (
     <div className="fixed inset-0 bg-white dark:bg-slate-950 flex flex-col items-center justify-center z-[200]">
       <h1 className="brand-font text-7xl font-bold brand-text-gradient animate-pulse-soft">Lumina</h1>
-      <div className="mt-8 flex space-x-2">
-        <div className="w-2 h-2 bg-brand-primary rounded-full animate-bounce" style={{ animationDelay: '0s' }}></div>
-        <div className="w-2 h-2 bg-brand-primary rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-        <div className="w-2 h-2 bg-brand-primary rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
-      </div>
     </div>
   );
 
   if (!currentUser) return (
     <div className="h-full flex flex-col md:flex-row bg-white dark:bg-slate-950 overflow-hidden">
-      <div className="w-full md:w-1/2 flex items-center justify-center p-6 md:p-12 bg-white dark:bg-slate-950 z-10">
-        <div className="w-full max-w-md space-y-10 animate-in slide-in-from-left duration-700">
-          <div className="text-center md:text-left">
-            <h1 className="brand-font text-6xl md:text-7xl font-bold brand-text-gradient mb-2">Lumina</h1>
-            <p className="text-gray-400 font-bold uppercase tracking-[0.3em] text-[10px] ml-1">The Studio for Visual Light</p>
-          </div>
-          {authError && <div className="bg-red-50 text-red-600 p-5 rounded-[1.5rem] text-sm font-bold border border-red-100 flex items-center space-x-3">
-            <span className="w-2 h-2 bg-red-600 rounded-full"></span>
-            <span>{authError}</span>
-          </div>}
+      <div className="w-full md:w-1/2 flex items-center justify-center p-6 md:p-12 z-10">
+        <div className="w-full max-w-md space-y-10">
+          <h1 className="brand-font text-6xl md:text-7xl font-bold brand-text-gradient mb-2 text-center md:text-left">Lumina</h1>
+          {authError && <div className="bg-red-50 text-red-600 p-5 rounded-[1.5rem] text-sm font-bold border border-red-100">{authError}</div>}
           <form onSubmit={handleAuthSubmit} className="space-y-4">
             {isRegistering && (
-              <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
-                <input type="text" placeholder="Full Name" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none focus:ring-2 focus:ring-brand-primary transition-all font-medium" value={authFormData.fullName} onChange={(e) => setAuthFormData({...authFormData, fullName: e.target.value})} />
-                <input type="date" placeholder="Birthday" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none focus:ring-2 focus:ring-brand-primary transition-all font-medium text-gray-400" value={authFormData.dob} onChange={(e) => setAuthFormData({...authFormData, dob: e.target.value})} />
-              </div>
+              <>
+                <input type="text" placeholder="Full Name" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none" value={authFormData.fullName} onChange={(e) => setAuthFormData({...authFormData, fullName: e.target.value})} />
+                <input type="date" placeholder="Birthday" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none" value={authFormData.dob} onChange={(e) => setAuthFormData({...authFormData, dob: e.target.value})} />
+              </>
             )}
-            <input type="tel" placeholder="Mobile Number" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none focus:ring-2 focus:ring-brand-primary transition-all font-medium" value={authFormData.mobile} onChange={(e) => setAuthFormData({...authFormData, mobile: e.target.value})} />
-            <input type="password" placeholder="Password" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none focus:ring-2 focus:ring-brand-primary transition-all font-medium" value={authFormData.password} onChange={(e) => setAuthFormData({...authFormData, password: e.target.value})} />
-            {isRegistering && (
-              <input type="password" placeholder="Confirm Password" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none focus:ring-2 focus:ring-brand-primary transition-all font-medium" value={authFormData.confirmPassword} onChange={(e) => setAuthFormData({...authFormData, confirmPassword: e.target.value})} />
-            )}
-            <button type="submit" disabled={isSubmittingAuth} className="w-full bg-brand-gradient text-white py-5 rounded-[1.5rem] font-black shadow-xl shadow-brand-primary/20 transition-all active:scale-[0.98] hover:brightness-110 flex items-center justify-center">
-              {isSubmittingAuth ? <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : (isRegistering ? 'Create Account' : 'Sign In')}
+            <input type="tel" placeholder="Mobile Number" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none" value={authFormData.mobile} onChange={(e) => setAuthFormData({...authFormData, mobile: e.target.value})} />
+            <input type="password" placeholder="Password" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none" value={authFormData.password} onChange={(e) => setAuthFormData({...authFormData, password: e.target.value})} />
+            {isRegistering && <input type="password" placeholder="Confirm Password" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none" value={authFormData.confirmPassword} onChange={(e) => setAuthFormData({...authFormData, confirmPassword: e.target.value})} />}
+            <button type="submit" disabled={isSubmittingAuth} className="w-full bg-brand-gradient text-white py-5 rounded-[1.5rem] font-black shadow-xl">
+              {isSubmittingAuth ? 'Processing...' : (isRegistering ? 'Create Account' : 'Sign In')}
             </button>
           </form>
-          <div className="relative py-4">
-            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-100 dark:border-slate-900"></div></div>
-            <div className="relative flex justify-center"><span className="bg-white dark:bg-slate-950 px-4 text-[10px] font-black uppercase text-gray-300 tracking-widest">or Join our circle</span></div>
-          </div>
-          <button onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); }} className="w-full text-center text-sm font-black text-brand-primary dark:text-brand-secondary hover:underline transition-all">
+          <button onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); }} className="w-full text-center text-sm font-black text-brand-primary">
             {isRegistering ? 'Already a member? Login' : "New to Lumina? Join the glow"}
           </button>
         </div>
       </div>
-      <div className="hidden md:flex w-1/2 bg-[#001a12] relative overflow-hidden flex-col items-center justify-center p-12 text-center select-none">
-        <div className="absolute inset-0 opacity-20 pointer-events-none">
-           <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-brand-primary rounded-full blur-[100px] animate-pulse"></div>
-           <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-brand-secondary rounded-full blur-[100px] animate-pulse-slow"></div>
-        </div>
-        <div className="relative z-10 max-w-lg animate-in zoom-in duration-1000">
-          <div className="mb-12 relative inline-block">
-            <div className="w-32 h-32 bg-white/5 backdrop-blur-3xl rounded-[2.5rem] border border-white/10 flex items-center justify-center mx-auto shadow-2xl relative z-20">
-               <ICONS.Magic className="w-16 h-16 text-white animate-bounce-slow" />
-            </div>
-          </div>
-          <h2 className="text-5xl font-black text-white tracking-tighter mb-6 leading-tight">Global Connectivity <br/> Starts Here</h2>
-          <p className="text-white/60 text-lg font-medium leading-relaxed mb-10">Welcome to the future of visual social circles. Lumina connects creative minds from every corner of the world.</p>
-        </div>
+      <div className="hidden md:flex w-1/2 bg-[#001a12] items-center justify-center p-12 text-center relative">
+        <h2 className="text-5xl font-black text-white z-10">Global Connectivity Starts Here</h2>
       </div>
     </div>
   );
@@ -496,81 +420,99 @@ const App: React.FC = () => {
   return (
     <Router>
       <div className="h-full flex flex-col md:flex-row bg-white dark:bg-slate-950 overflow-hidden text-gray-900 dark:text-gray-100">
-        <aside className="hidden md:flex flex-col w-72 bg-white dark:bg-slate-900 border-r border-gray-100 dark:border-slate-800 p-6 z-[60] h-screen sticky top-0">
+        <aside className="hidden md:flex flex-col w-72 bg-white dark:bg-slate-900 border-r dark:border-slate-800 p-6 z-[60] h-screen sticky top-0">
           <h1 className="brand-font text-4xl font-bold brand-text-gradient mb-12 cursor-pointer" onClick={() => handleTabChange('home')}>Lumina</h1>
           <nav className="flex-1 space-y-2">
-             <button onClick={() => handleTabChange('home')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl transition-all ${activeTab === 'home' ? 'bg-brand-primary/10 text-brand-primary' : 'hover:bg-gray-50 dark:hover:bg-slate-800'}`}><ICONS.Home className="w-6 h-6" /><span>Home</span></button>
-             <button onClick={() => handleTabChange('chat')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl transition-all ${activeTab === 'chat' ? 'bg-brand-primary/10 text-brand-primary' : 'hover:bg-gray-50 dark:hover:bg-slate-800'}`}><ICONS.Chat className="w-6 h-6" /><span>Messages</span></button>
-             <button onClick={() => handleTabChange('friends')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl transition-all ${activeTab === 'friends' ? 'bg-brand-primary/10 text-brand-primary' : 'hover:bg-gray-50 dark:hover:bg-slate-800'}`}><ICONS.Friends className="w-6 h-6" /><span>Community</span></button>
-             <button onClick={() => handleTabChange('profile')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl transition-all ${activeTab === 'profile' ? 'bg-brand-primary/10 text-brand-primary' : 'hover:bg-gray-50 dark:hover:bg-slate-800'}`}><img src={currentUser.avatar} className="w-6 h-6 rounded-full" alt="" /><span>Profile</span></button>
+             <button onClick={() => handleTabChange('home')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl ${activeTab === 'home' ? 'bg-brand-primary/10 text-brand-primary' : ''}`}><ICONS.Home className="w-6 h-6" /><span>Home</span></button>
+             <button onClick={() => handleTabChange('chat')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl ${activeTab === 'chat' ? 'bg-brand-primary/10 text-brand-primary' : ''}`}><ICONS.Chat className="w-6 h-6" /><span>Messages</span></button>
+             <button onClick={() => handleTabChange('friends')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl ${activeTab === 'friends' ? 'bg-brand-primary/10 text-brand-primary' : ''}`}><ICONS.Friends className="w-6 h-6" /><span>Community</span></button>
+             <button onClick={() => handleTabChange('profile')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl ${activeTab === 'profile' ? 'bg-brand-primary/10 text-brand-primary' : ''}`}><img src={currentUser.avatar} className="w-6 h-6 rounded-full" alt="" /><span>Profile</span></button>
           </nav>
         </aside>
 
         <div className="flex-1 flex flex-col min-w-0 h-full relative">
           {toast && <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[700] px-6 py-3 rounded-2xl shadow-2xl font-bold animate-in fade-in slide-in-from-top ${toast.type === 'success' ? 'bg-brand-primary text-white' : 'bg-brand-secondary text-white'}`}>{toast.message}</div>}
 
-          <header className={`${(selectedChatUser && activeTab === 'chat') ? 'hidden md:flex' : 'flex'} flex-none bg-white dark:bg-slate-900 border-b dark:border-slate-800 px-4 pt-4 pb-3 items-center justify-between sticky top-0 z-50 md:hidden`}>
+          <header className={`${activeTab === 'chat' ? 'hidden md:flex' : 'flex'} flex-none bg-white dark:bg-slate-900 border-b dark:border-slate-800 px-4 pt-4 pb-3 items-center justify-between sticky top-0 z-50 md:hidden`}>
             <button onClick={() => setShowMenu(true)} className="p-2"><ICONS.Menu className="w-6 h-6" /></button>
-            <h1 className="brand-font text-3xl font-bold brand-text-gradient" onClick={() => handleTabChange('home')}>Lumina</h1>
-            <div className="flex items-center space-x-1">
-              <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} className="p-2 text-brand-primary"><ICONS.Magic className="w-6 h-6" /></button>
-            </div>
+            <h1 className="brand-font text-3xl font-bold brand-text-gradient">Lumina</h1>
+            <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} className="p-2 text-brand-primary"><ICONS.Magic className="w-6 h-6" /></button>
           </header>
 
           <main className="flex-1 overflow-y-auto no-scrollbar scroll-smooth">
             <div className={`w-full mx-auto p-0 ${activeTab === 'chat' ? 'h-full' : 'max-w-[1200px] md:p-8'}`}>
               {activeTab === 'home' && (
                 <div className="space-y-8">
-                  <div className="flex space-x-4 overflow-x-auto no-scrollbar py-6 px-4 md:px-0">
+                  <div className="flex space-x-4 overflow-x-auto no-scrollbar py-6 px-4">
                     <div onClick={() => setShowCreateStoryModal(true)} className="flex flex-col items-center space-y-2 cursor-pointer min-w-[85px]">
                       <div className="relative w-[75px] h-[75px]">
-                        <img src={currentUser.avatar} className="w-full h-full rounded-full object-cover border-2 border-white dark:border-slate-900 shadow-md" alt="" />
+                        <img src={currentUser.avatar} className="w-full h-full rounded-full object-cover border-2 border-white dark:border-slate-900" alt="" />
                         <div className="absolute bottom-0 right-0 bg-brand-secondary text-white rounded-full p-1 border-2 border-white dark:border-slate-900 shadow-sm"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M12 4v16m8-8H4"></path></svg></div>
                       </div>
                       <span className="text-[10px] font-black uppercase text-gray-400">Your Story</span>
                     </div>
                     {stories.map(s => (
                       <div key={s.id} onClick={() => setActiveStory(s)} className="flex flex-col items-center space-y-2 cursor-pointer min-w-[85px]">
-                        <div className="w-[75px] h-[75px] rounded-full story-ring shadow-lg">
-                          <img src={s.user.avatar} className="w-full h-full rounded-full border-2 border-white dark:border-slate-900 object-cover bg-white" alt="" />
-                        </div>
+                        <div className="w-[75px] h-[75px] rounded-full story-ring"><img src={s.user.avatar} className="w-full h-full rounded-full border-2 border-white dark:border-slate-900 object-cover bg-white" alt="" /></div>
                         <span className="text-[10px] font-black truncate w-full text-center uppercase text-gray-600 dark:text-gray-300">{s.user.username}</span>
                       </div>
                     ))}
                   </div>
-                  <div className="space-y-6 flex flex-col items-center pb-24 md:pb-8">
-                    {posts.length > 0 ? posts.map(post => (
-                      <PostCard key={post.id} post={post} currentUser={currentUser} onLike={handleLike} onSave={handleSavePost} onComment={() => setViewingCommentsPost(post)} onUserClick={(u) => { setViewingUser(u); setActiveTab('profile'); }} onDelete={async () => fetchPosts()} onEdit={() => {}} onOpenComments={setViewingCommentsPost} onPhotoClick={setSelectedPostDetail} />
-                    )) : (
-                      <div className="py-20 text-center opacity-40">
-                         <ICONS.Magic className="w-20 h-20 mx-auto mb-4" />
-                         <p className="font-bold">No moments shared yet. Be the first to glow!</p>
-                      </div>
-                    )}
+                  <div className="space-y-6 flex flex-col items-center pb-24">
+                    {posts.map(post => <PostCard key={post.id} post={post} currentUser={currentUser} onLike={handleLike} onSave={handleSavePost} onComment={() => setViewingCommentsPost(post)} onUserClick={(u) => { /* Handle profile click if needed */ }} onDelete={async () => fetchPosts()} onEdit={() => {}} onOpenComments={setViewingCommentsPost} onPhotoClick={setSelectedPostDetail} />)}
                   </div>
                 </div>
               )}
 
               {activeTab === 'chat' && (
-                <div className="h-full flex flex-col md:flex-row bg-white dark:bg-slate-950 md:rounded-3xl overflow-hidden md:border dark:border-slate-800 md:m-4 lg:m-8 shadow-2xl">
+                <div className="h-full flex flex-col md:flex-row bg-white dark:bg-slate-950 md:rounded-3xl overflow-hidden md:border dark:border-slate-800 md:m-4 shadow-2xl">
                   <div className={`w-full md:w-96 border-r dark:border-slate-800 flex flex-col ${selectedChatUser ? 'hidden md:flex' : 'flex'}`}>
-                    <div className="p-6 border-b dark:border-slate-800 flex flex-col space-y-4">
-                      <h2 className="font-black text-3xl tracking-tight">Messages</h2>
+                    <div className="p-6 border-b dark:border-slate-800 space-y-4">
+                      <div className="flex items-center space-x-3">
+                         <button onClick={() => handleTabChange('home')} className="md:hidden p-2 -ml-2 text-brand-primary"><ICONS.ChevronLeft className="w-6 h-6" /></button>
+                         <h2 className="font-black text-3xl">Messages</h2>
+                      </div>
                       <div className="relative">
                         <ICONS.Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                        <input type="text" placeholder="Quick search..." className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-slate-900 border-none rounded-2xl text-sm outline-none focus:ring-2 focus:ring-brand-primary transition-all shadow-inner" value={chatSearchQuery} onChange={(e) => setChatSearchQuery(e.target.value)} />
+                        <input type="text" placeholder="Search name, user or mobile..." className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-slate-900 border-none rounded-2xl text-sm outline-none focus:ring-2 focus:ring-brand-primary dark:text-white" value={chatSearchQuery} onChange={(e) => setChatSearchQuery(e.target.value)} />
                       </div>
                     </div>
-                    <div className="flex-1 overflow-y-auto no-scrollbar p-2 space-y-1">
-                      {conversations.map(u => (
-                        <div key={u.id} onClick={() => handleStartChat(u)} className={`flex items-center space-x-4 p-4 rounded-[1.5rem] cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-900 transition-all ${selectedChatUser?.id === u.id ? 'bg-brand-primary/10 border-l-4 border-brand-primary shadow-sm' : ''}`}>
-                          <img src={u.avatar} className="w-14 h-14 rounded-full object-cover shadow-sm" alt="" />
-                          <div className="flex-1 min-w-0">
-                            <p className="font-bold text-sm truncate">{u.username}</p>
-                            <p className="text-xs text-gray-500 truncate font-medium">Click to message...</p>
-                          </div>
+                    <div className="flex-1 overflow-y-auto no-scrollbar p-2">
+                      {isSearchingChat && (
+                        <div className="p-10 text-center"><div className="w-8 h-8 border-2 border-brand-primary border-t-transparent rounded-full animate-spin mx-auto"></div></div>
+                      )}
+                      
+                      {!isSearchingChat && chatSearchQuery.trim() !== '' && (
+                        <div className="mb-4">
+                           <p className="px-4 py-2 text-[10px] font-black text-gray-400 uppercase tracking-widest">Global Search</p>
+                           {chatSearchResults.map(u => (
+                            <div key={u.id} onClick={() => handleStartChat(u)} className="flex items-center space-x-4 p-4 rounded-[1.5rem] cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-900">
+                              <img src={u.avatar} className="w-12 h-12 rounded-full object-cover" alt="" />
+                              <div className="flex-1 min-w-0">
+                                <p className="font-bold text-sm truncate">{u.fullName}</p>
+                                <p className="text-xs text-gray-500 truncate">@{u.username} {u.mobile ? `• ${u.mobile}` : ''}</p>
+                              </div>
+                            </div>
+                           ))}
+                           {chatSearchResults.length === 0 && <p className="p-6 text-center text-sm text-gray-400 italic">No users found</p>}
                         </div>
-                      ))}
+                      )}
+
+                      {chatSearchQuery.trim() === '' && (
+                        <div>
+                           <p className="px-4 py-2 text-[10px] font-black text-gray-400 uppercase tracking-widest">Recent Chats</p>
+                           {conversations.map(u => (
+                            <div key={u.id} onClick={() => handleStartChat(u)} className={`flex items-center space-x-4 p-4 rounded-[1.5rem] cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-900 ${selectedChatUser?.id === u.id ? 'bg-brand-primary/10' : ''}`}>
+                              <img src={u.avatar} className="w-14 h-14 rounded-full object-cover" alt="" />
+                              <div className="flex-1 min-w-0">
+                                <p className="font-bold text-sm truncate">{u.fullName}</p>
+                                <p className="text-xs text-gray-500 truncate font-medium">@{u.username}</p>
+                              </div>
+                            </div>
+                           ))}
+                           {conversations.length === 0 && <p className="p-10 text-center text-sm text-gray-400 opacity-50">Search for people to start a chat</p>}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className={`flex-1 flex flex-col h-full bg-white dark:bg-slate-950 ${selectedChatUser ? 'fixed inset-0 z-[100] md:relative md:z-auto' : 'hidden md:flex'}`}>
@@ -580,13 +522,16 @@ const App: React.FC = () => {
                           <div className="flex items-center space-x-4">
                             <button onClick={() => setSelectedChatUser(null)} className="md:hidden p-2.5 bg-gray-100 dark:bg-slate-800 rounded-2xl"><ICONS.ChevronLeft className="w-6 h-6" /></button>
                             <img src={selectedChatUser.avatar} className="w-10 h-10 md:w-12 md:h-12 rounded-full object-cover" alt="" />
-                            <p className="font-black text-sm md:text-base">{selectedChatUser.username}</p>
+                            <div>
+                               <p className="font-black text-sm md:text-base leading-tight">{selectedChatUser.fullName}</p>
+                               <p className="text-[10px] font-bold text-gray-400">@{selectedChatUser.username}</p>
+                            </div>
                           </div>
                         </div>
-                        <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 bg-gray-50/30 dark:bg-slate-900/10">
+                        <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
                           {chatMessages.map((m, idx) => (
                             <div key={m.id || idx} className={`flex flex-col ${m.sender_id === currentUser.id ? 'items-end' : 'items-start'}`}>
-                              <div className={`max-w-[85%] md:max-w-[70%] px-5 py-3.5 rounded-[1.5rem] text-sm md:text-[15px] font-medium shadow-sm ${m.sender_id === currentUser.id ? 'bg-brand-gradient text-white rounded-br-none' : 'bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 rounded-bl-none border dark:border-slate-700'}`}>
+                              <div className={`max-w-[85%] px-5 py-3.5 rounded-[1.5rem] text-sm font-medium shadow-sm ${m.sender_id === currentUser.id ? 'bg-brand-gradient text-white rounded-br-none' : 'bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 rounded-bl-none border dark:border-slate-700'}`}>
                                 {m.text}
                               </div>
                             </div>
@@ -595,15 +540,15 @@ const App: React.FC = () => {
                         </div>
                         <div className="p-4 md:p-6 border-t dark:border-slate-800 bg-white dark:bg-slate-950">
                           <div className="flex items-end space-x-3 max-w-4xl mx-auto">
-                            <textarea rows={1} placeholder="Type a message..." className="flex-1 bg-gray-50 dark:bg-slate-900 px-6 py-4 rounded-[1.5rem] outline-none focus:ring-2 focus:ring-brand-primary transition-all border-none dark:text-white shadow-inner resize-none max-h-32 font-medium" value={messageInput} onChange={(e) => setMessageInput(e.target.value)} onKeyPress={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} />
-                            <button onClick={sendMessage} disabled={!messageInput.trim()} className="w-14 h-14 bg-brand-gradient text-white rounded-2xl flex items-center justify-center shadow-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-20"><ICONS.Share className="w-6 h-6" /></button>
+                            <textarea rows={1} placeholder="Type a message..." className="flex-1 bg-gray-50 dark:bg-slate-900 px-6 py-4 rounded-[1.5rem] outline-none border-none dark:text-white shadow-inner resize-none font-medium" value={messageInput} onChange={(e) => setMessageInput(e.target.value)} onKeyPress={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} />
+                            <button onClick={sendMessage} disabled={!messageInput.trim()} className="w-14 h-14 bg-brand-gradient text-white rounded-2xl flex items-center justify-center shadow-xl disabled:opacity-20"><ICONS.Share className="w-6 h-6" /></button>
                           </div>
                         </div>
                       </>
                     ) : (
                       <div className="flex-1 flex flex-col items-center justify-center opacity-20">
                         <ICONS.Chat className="w-20 h-20 mb-4" />
-                        <p className="font-black">Select a chat to start</p>
+                        <p className="font-black text-xl">Select a conversation</p>
                       </div>
                     )}
                   </div>
@@ -611,15 +556,18 @@ const App: React.FC = () => {
               )}
 
               {activeTab === 'friends' && (
-                <div className="p-4 md:p-0 space-y-8 animate-in fade-in duration-500">
+                <div className="p-4 md:p-0 space-y-8">
                   <h2 className="text-4xl font-black tracking-tighter">Community</h2>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-24 md:pb-8">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-24">
                     {allUsers.map(user => (
                       <div key={user.id} className="bg-white dark:bg-slate-900 border dark:border-slate-800 rounded-[2.5rem] p-6 shadow-sm flex flex-col items-center text-center">
-                        <img src={user.avatar} className="w-20 h-20 rounded-full mb-4 object-cover border-4 border-gray-50" alt="" />
+                        <img src={user.avatar} className="w-20 h-20 rounded-full mb-4 object-cover border-4 border-gray-50 dark:border-slate-800" alt="" />
                         <h3 className="font-black text-lg">{user.fullName}</h3>
                         <p className="text-brand-primary font-bold text-xs mb-4">@{user.username}</p>
-                        <button onClick={() => toggleFollow(user.id)} className={`w-full py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${followingIds.has(user.id) ? 'bg-gray-100 text-gray-500' : 'bg-brand-primary text-white shadow-lg'}`}>{followingIds.has(user.id) ? 'Unfollow' : 'Follow'}</button>
+                        <div className="flex w-full space-x-2">
+                           <button onClick={() => toggleFollow(user.id)} className={`flex-1 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest ${followingIds.has(user.id) ? 'bg-gray-100 text-gray-500' : 'bg-brand-primary text-white shadow-lg'}`}>{followingIds.has(user.id) ? 'Unfollow' : 'Follow'}</button>
+                           <button onClick={() => handleStartChat(user)} className="p-3 bg-gray-50 dark:bg-slate-800 rounded-2xl text-brand-primary"><ICONS.Chat className="w-5 h-5" /></button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -627,35 +575,71 @@ const App: React.FC = () => {
               )}
 
               {activeTab === 'profile' && currentUser && (
-                <div className="bg-white dark:bg-slate-900 md:rounded-[3rem] overflow-hidden shadow-2xl animate-in fade-in duration-500">
-                  <div className="h-48 md:h-64 relative">
-                    <img src={currentUser.coverPhoto} className="w-full h-full object-cover" alt="Cover" />
-                    <div className="absolute inset-0 bg-black/20"></div>
-                  </div>
-                  <div className="px-6 md:px-12 pb-24 md:pb-12 -mt-16 relative z-10">
+                <div className="bg-white dark:bg-slate-900 md:rounded-[3rem] overflow-hidden shadow-2xl animate-in fade-in">
+                  <div className="h-48 md:h-64 relative"><img src={currentUser.coverPhoto} className="w-full h-full object-cover" alt="Cover" /></div>
+                  <div className="px-6 md:px-12 pb-24 -mt-16 relative z-10">
                     <img src={currentUser.avatar} className="w-32 h-32 md:w-40 md:h-40 rounded-[2.5rem] border-8 border-white dark:border-slate-900 shadow-2xl object-cover bg-white mb-6" alt="" />
                     <div className="flex flex-col md:flex-row md:items-end md:justify-between mb-8">
                        <div>
                           <h2 className="text-4xl font-black tracking-tighter mb-1">{currentUser.fullName}</h2>
                           <p className="text-brand-primary font-black uppercase tracking-widest text-sm">@{currentUser.username}</p>
                        </div>
-                       <button onClick={() => setShowEditProfileModal(true)} className="mt-6 md:mt-0 px-8 py-3.5 bg-brand-gradient text-white rounded-2xl font-black text-sm shadow-xl">Edit Identity</button>
+                       <div className="flex items-center space-x-3 mt-6 md:mt-0">
+                          <button onClick={() => setShowEditProfileModal(true)} className="px-8 py-3.5 bg-brand-gradient text-white rounded-2xl font-black text-sm shadow-xl">Edit Identity</button>
+                       </div>
                     </div>
-                    <p className="max-w-2xl text-gray-600 dark:text-gray-400 font-medium leading-relaxed mb-12">{currentUser.bio}</p>
+                    
+                    {/* Bio and Info Section */}
+                    <div className="max-w-2xl space-y-6 mb-12">
+                       <p className="text-gray-700 dark:text-gray-300 font-medium leading-relaxed text-lg italic border-l-4 border-brand-primary pl-4 py-1">
+                          {currentUser.bio || "No light shared in the bio yet..."}
+                       </p>
+                       
+                       <div className="flex flex-wrap gap-y-3 gap-x-6">
+                          {currentUser.work && (
+                            <div className="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
+                              <ICONS.Briefcase className="w-4 h-4" />
+                              <span className="text-sm font-bold">{currentUser.work}</span>
+                            </div>
+                          )}
+                          {currentUser.location && (
+                            <div className="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
+                              <ICONS.MapPin className="w-4 h-4" />
+                              <span className="text-sm font-bold">{currentUser.location}</span>
+                            </div>
+                          )}
+                          {currentUser.website && (
+                            <a href={currentUser.website.startsWith('http') ? currentUser.website : `https://${currentUser.website}`} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-2 text-brand-primary font-black">
+                              <ICONS.Link className="w-4 h-4" />
+                              <span className="text-sm truncate max-w-[200px]">{currentUser.website.replace(/(^\w+:|^)\/\//, '')}</span>
+                            </a>
+                          )}
+                       </div>
+                    </div>
+
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                       {posts.filter(p => p.user.id === currentUser.id).map(p => (
-                        <div key={p.id} onClick={() => setSelectedPostDetail(p)} className="aspect-square rounded-2xl overflow-hidden cursor-pointer group relative">
-                          <img src={p.imageUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" alt="" />
+                        <div key={p.id} onClick={() => setSelectedPostDetail(p)} className="aspect-square rounded-2xl overflow-hidden cursor-pointer relative group border dark:border-slate-800">
+                          <img src={p.imageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" alt="" />
+                          <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                         </div>
                       ))}
+                      {posts.filter(p => p.user.id === currentUser.id).length === 0 && (
+                        <div className="col-span-full py-20 text-center opacity-30">
+                           <ICONS.Magic className="w-16 h-16 mx-auto mb-4" />
+                           <p className="font-black uppercase tracking-widest text-sm">No posts yet</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
               )}
             </div>
           </main>
-          <Navbar onTabChange={handleTabChange} activeTab={activeTab} />
-          {showMenu && <Sidebar isOpen={showMenu} onClose={() => setShowMenu(false)} user={currentUser} onLogout={() => supabase.auth.signOut()} onThemeToggle={() => setTheme(theme === 'light' ? 'dark' : 'light')} onSavedClick={() => { setActiveTab('saved'); setShowMenu(false); }} currentTheme={theme} />}
+          
+          <Navbar onTabChange={handleTabChange} activeTab={activeTab} hiddenOnMobile={activeTab === 'chat'} />
+          
+          {showMenu && <Sidebar isOpen={showMenu} onClose={() => setShowMenu(false)} user={currentUser} onLogout={handleLogout} onThemeToggle={() => setTheme(theme === 'light' ? 'dark' : 'light')} onSavedClick={() => { setActiveTab('saved'); setShowMenu(false); }} currentTheme={theme} />}
           {showCreateModal && <CreatePostModal onClose={() => setShowCreateModal(false)} onPost={async (img, cap) => { await supabase.from('posts').insert({ user_id: currentUser.id, image_url: img, caption: cap }); fetchPosts(); setActiveTab('home'); }} />}
           {showCreateStoryModal && <CreateStoryModal onClose={() => setShowCreateStoryModal(false)} onPost={handlePostStory} />}
           {showEditProfileModal && currentUser && <EditProfileModal user={currentUser} onClose={() => setShowEditProfileModal(false)} onUpdate={handleUpdateProfile} />}

@@ -4,6 +4,7 @@ export interface User {
   username: string;
   avatar: string;
   fullName: string;
+  mobile?: string;
   coverPhoto?: string;
   isVerified?: boolean;
   isFollowing?: boolean;
@@ -25,7 +26,7 @@ export interface Post {
   comments: Comment[];
   timestamp: string;
   isLiked: boolean;
-  isSaved?: boolean; // New property to track if post is saved by current user
+  isSaved?: boolean;
 }
 
 export interface Comment {
@@ -40,7 +41,7 @@ export interface Story {
   user: User;
   imageUrl: string;
   viewed: boolean;
-  createdAt: number; // Unix timestamp in milliseconds
+  createdAt: number;
 }
 
 export interface FriendRequest {

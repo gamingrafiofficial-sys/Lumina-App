@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { ICONS } from '../constants';
 import { User } from '../types';
@@ -27,10 +26,8 @@ const Navbar: React.FC<NavbarProps> = ({ onTabChange, activeTab, hiddenOnMobile 
     { id: 'profile', icon: 'avatar' },
   ];
 
-  if (hiddenOnMobile) return null;
-
   return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-gray-100 dark:border-slate-800 z-[100] transition-colors duration-300 md:hidden animate-in slide-in-from-bottom duration-300">
+    <nav className={`fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-gray-100 dark:border-slate-800 z-[100] transition-colors duration-300 ${hiddenOnMobile ? 'hidden' : 'md:hidden'} animate-in slide-in-from-bottom duration-300`}>
       <div className="flex w-full justify-around items-end px-2 pb-[calc(12px+env(safe-area-inset-bottom))]">
         {navItems.map((item) => {
           const isActive = activeTab === item.id;
