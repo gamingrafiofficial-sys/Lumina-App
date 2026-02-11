@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { HashRouter as Router } from 'react-router-dom';
 import Navbar from './components/Navbar';
@@ -128,7 +127,9 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [chatMessages]);
 
   useEffect(() => {
@@ -194,8 +195,7 @@ const App: React.FC = () => {
       const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
       
       if (error || !data) {
-        // Fallback for users who might have an auth record but no profile yet
-        console.warn("Profile not found, user may need to complete registration.");
+        console.warn("Profile not found or error fetching profile.");
         setSessionLoading(false);
         return;
       }
@@ -215,9 +215,8 @@ const App: React.FC = () => {
       setCurrentUser(user);
       localStorage.setItem('lumina_user', JSON.stringify(user));
     } catch (err) {
-      console.error("Error fetching profile:", err);
+      console.error("Error in fetchProfile:", err);
     } finally {
-      // CRITICAL: Always release the loading state
       setSessionLoading(false);
     }
   };
@@ -230,18 +229,6 @@ const App: React.FC = () => {
       fetchConversations();
     }
   }, [currentUser]);
-
-  const performChatSearch = async () => {
-    if (!chatSearchQuery.trim()) return;
-    setIsSearchingChat(true);
-    const { data, error } = await supabase.from('profiles').select('*').neq('id', currentUser?.id).or(`username.ilike.%${chatSearchQuery}%,full_name.ilike.%${chatSearchQuery}%`).limit(10);
-    if (!error && data) {
-      setChatSearchResults(data.map(u => ({
-        id: u.id, username: u.username, fullName: u.full_name, avatar: u.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.username}`
-      })));
-    }
-    setIsSearchingChat(false);
-  };
 
   const fetchStories = async () => {
     const expiryTime = new Date(Date.now() - STORY_TTL).toISOString();
@@ -356,7 +343,6 @@ const App: React.FC = () => {
     else setToast({ message: 'Failed to update identity.', type: 'error' });
   };
 
-  // handlePostStory: Added implementation to fix the compilation error
   const handlePostStory = async (imageUrl: string) => {
     if (!currentUser) return;
     const { error } = await supabase.from('stories').insert({
