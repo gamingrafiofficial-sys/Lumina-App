@@ -62,13 +62,6 @@ const App: React.FC = () => {
   const STORY_TTL = 24 * 60 * 60 * 1000;
 
   useEffect(() => {
-    // Safety timeout for initial splash screen
-    const safetyTimer = setTimeout(() => {
-      if (sessionLoading) {
-        setSessionLoading(false);
-      }
-    }, 6000);
-
     const initializeAuth = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
@@ -93,10 +86,7 @@ const App: React.FC = () => {
       }
     });
 
-    return () => {
-      clearTimeout(safetyTimer);
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
   const fetchProfile = async (userId: string) => {
@@ -108,6 +98,19 @@ const App: React.FC = () => {
         .maybeSingle();
 
       if (error || !data) {
+        // If profile doesn't exist, don't hang, provide a fallback user
+        if (!data) {
+          const fallbackUser: User = {
+            id: userId,
+            username: `user_${userId.substring(0, 5)}`,
+            fullName: 'Lumina User',
+            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`,
+            bio: "Welcome to Lumina!"
+          };
+          setCurrentUser(fallbackUser);
+          setSessionLoading(false);
+          return;
+        }
         setSessionLoading(false);
         return;
       }
@@ -126,7 +129,7 @@ const App: React.FC = () => {
       };
       setCurrentUser(user);
     } catch (err) {
-      console.error("Fetch profile error:", err);
+      console.error("Profile fetch error:", err);
     } finally {
       setSessionLoading(false);
     }
@@ -137,29 +140,19 @@ const App: React.FC = () => {
     setAuthError('');
     setIsSubmittingAuth(true);
 
-    // Sanitize mobile number (remove spaces, dashes, etc)
     const sanitizedMobile = authFormData.mobile.trim().replace(/[^0-9]/g, '');
     if (sanitizedMobile.length < 5) {
-      setAuthError('Please enter a valid mobile number');
+      setAuthError('Invalid mobile number');
       setIsSubmittingAuth(false);
       return;
     }
 
     const proxyEmail = `${sanitizedMobile}@lumina.app`;
-    
-    // Safety timeout for auth submission (10 seconds)
-    const timeoutId = setTimeout(() => {
-      if (isSubmittingAuth) {
-        setIsSubmittingAuth(false);
-        setAuthError('Request timed out. Please check your internet and try again.');
-      }
-    }, 12000);
 
     try {
       if (isRegistering) {
         if (authFormData.password !== authFormData.confirmPassword) {
           setAuthError('Passwords do not match');
-          clearTimeout(timeoutId);
           setIsSubmittingAuth(false);
           return;
         }
@@ -173,7 +166,7 @@ const App: React.FC = () => {
           setAuthError(error.message);
         } else if (data.user) {
           const username = authFormData.fullName.toLowerCase().replace(/\s+/g, '_') + Math.floor(Math.random() * 100);
-          const { error: profileError } = await supabase.from('profiles').insert({
+          await supabase.from('profiles').insert({
             id: data.user.id,
             username,
             full_name: authFormData.fullName,
@@ -181,12 +174,7 @@ const App: React.FC = () => {
             dob: authFormData.dob,
             avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`
           });
-          
-          if (profileError) {
-            setAuthError('Account created but profile setup failed. Please try logging in.');
-          } else {
-            await fetchProfile(data.user.id);
-          }
+          await fetchProfile(data.user.id);
         }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -195,20 +183,20 @@ const App: React.FC = () => {
         });
 
         if (error) {
-          setAuthError('Invalid credentials. Please check your number and password.');
+          setAuthError('Login failed. Check your number/password.');
         } else if (data.user) {
+          // Immediately fetch profile and switch UI
           await fetchProfile(data.user.id);
+          setActiveTab('home');
         }
       }
     } catch (err) {
-      setAuthError("Connection error. Please try again later.");
+      setAuthError("Connection error.");
     } finally {
-      clearTimeout(timeoutId);
       setIsSubmittingAuth(false);
     }
   };
 
-  // Rest of the application logic... (posts, chat, stories, etc)
   useEffect(() => {
     const searchUsers = async () => {
       const query = chatSearchQuery.trim();
@@ -408,11 +396,10 @@ const App: React.FC = () => {
       setCurrentUser(null);
       localStorage.removeItem('lumina_user');
       setShowMenu(false);
-      setToast({ message: 'Logged out safely. See you soon!', type: 'success' });
+      setToast({ message: 'Logged out safely.', type: 'success' });
       setActiveTab('home');
     } catch (error) {
       console.error("Logout failed:", error);
-      setToast({ message: 'Failed to log out. Try again.', type: 'error' });
     }
   };
 
@@ -449,9 +436,9 @@ const App: React.FC = () => {
   if (!currentUser) return (
     <div className="h-full flex flex-col md:flex-row bg-white dark:bg-slate-950 overflow-hidden">
       <div className="w-full md:w-1/2 flex items-center justify-center p-6 md:p-12 z-10">
-        <div className="w-full max-w-md space-y-10">
+        <div className="w-full max-w-md space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <h1 className="brand-font text-6xl md:text-7xl font-bold brand-text-gradient mb-2 text-center md:text-left">Lumina</h1>
-          {authError && <div className="bg-red-50 text-red-600 p-5 rounded-[1.5rem] text-sm font-bold border border-red-100 animate-in fade-in slide-in-from-top-2">{authError}</div>}
+          {authError && <div className="bg-red-50 text-red-600 p-5 rounded-[1.5rem] text-sm font-bold border border-red-100 animate-in shake-in duration-300">{authError}</div>}
           <form onSubmit={handleAuthSubmit} className="space-y-4">
             {isRegistering && (
               <>
@@ -463,7 +450,12 @@ const App: React.FC = () => {
             <input type="password" placeholder="Password" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none" value={authFormData.password} onChange={(e) => setAuthFormData({...authFormData, password: e.target.value})} />
             {isRegistering && <input type="password" placeholder="Confirm Password" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none" value={authFormData.confirmPassword} onChange={(e) => setAuthFormData({...authFormData, confirmPassword: e.target.value})} />}
             <button type="submit" disabled={isSubmittingAuth} className="w-full bg-brand-gradient text-white py-5 rounded-[1.5rem] font-black shadow-xl disabled:opacity-70 transition-all active:scale-[0.98]">
-              {isSubmittingAuth ? 'Processing...' : (isRegistering ? 'Create Account' : 'Sign In')}
+              {isSubmittingAuth ? (
+                <div className="flex items-center justify-center space-x-2">
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                  <span>Shining...</span>
+                </div>
+              ) : (isRegistering ? 'Create Account' : 'Sign In')}
             </button>
           </form>
           <button onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); }} className="w-full text-center text-sm font-black text-brand-primary">
@@ -525,7 +517,7 @@ const App: React.FC = () => {
               )}
 
               {activeTab === 'saved' && (
-                <div className="p-4 md:p-0 space-y-8">
+                <div className="p-4 md:p-0 space-y-8 animate-in fade-in duration-500">
                   <div className="flex items-center space-x-4">
                     <button onClick={() => handleTabChange('home')} className="md:hidden p-2 bg-gray-100 dark:bg-slate-800 rounded-xl"><ICONS.ChevronLeft className="w-6 h-6" /></button>
                     <h2 className="text-4xl font-black tracking-tighter">Saved Moments</h2>
@@ -644,7 +636,7 @@ const App: React.FC = () => {
               )}
 
               {activeTab === 'friends' && (
-                <div className="p-4 md:p-0 space-y-8">
+                <div className="p-4 md:p-0 space-y-8 animate-in fade-in duration-500">
                   <h2 className="text-4xl font-black tracking-tighter">Community</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-24">
                     {allUsers.map(user => (
@@ -663,7 +655,7 @@ const App: React.FC = () => {
               )}
 
               {activeTab === 'profile' && currentUser && (
-                <div className="bg-white dark:bg-slate-900 md:rounded-[3rem] overflow-hidden shadow-2xl animate-in fade-in">
+                <div className="bg-white dark:bg-slate-900 md:rounded-[3rem] overflow-hidden shadow-2xl animate-in fade-in duration-500">
                   <div className="h-48 md:h-64 relative"><img src={currentUser.coverPhoto} className="w-full h-full object-cover" alt="Cover" /></div>
                   <div className="px-6 md:px-12 pb-24 -mt-16 relative z-10">
                     <img src={currentUser.avatar} className="w-32 h-32 md:w-40 md:h-40 rounded-[2.5rem] border-8 border-white dark:border-slate-900 shadow-2xl object-cover bg-white mb-6" alt="" />
@@ -679,7 +671,7 @@ const App: React.FC = () => {
                     
                     <div className="max-w-2xl space-y-6 mb-12">
                        <p className="text-gray-700 dark:text-gray-300 font-medium leading-relaxed text-lg italic border-l-4 border-brand-primary pl-4 py-1">
-                          {currentUser.bio || "No light shared in the bio yet..."}
+                          {currentUser.bio || "Sharing light on Lumina ✨"}
                        </p>
                        
                        <div className="flex flex-wrap gap-y-3 gap-x-6">
