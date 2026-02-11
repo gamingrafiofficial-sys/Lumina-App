@@ -75,20 +75,38 @@ const App: React.FC = () => {
   }, [chatMessages]);
 
   useEffect(() => {
+    // Safety timeout to ensure splash screen doesn't hang
+    const splashTimer = setTimeout(() => {
+      setSessionLoading(false);
+    }, 3000);
+
     const init = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) await fetchProfile(session.user.id);
-      } catch (e) { console.error(e); }
-      setSessionLoading(false);
+        if (session?.user) {
+          await fetchProfile(session.user.id);
+        }
+      } catch (e) { 
+        console.error("Init failed:", e); 
+      } finally {
+        setSessionLoading(false);
+        clearTimeout(splashTimer);
+      }
     };
     init();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session?.user) await fetchProfile(session.user.id);
-      else setCurrentUser(null);
+      if (session?.user) {
+        await fetchProfile(session.user.id);
+      } else {
+        setCurrentUser(null);
+      }
     });
-    return () => subscription.unsubscribe();
+
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(splashTimer);
+    };
   }, []);
 
   const fetchProfile = async (userId: string) => {
@@ -107,6 +125,8 @@ const App: React.FC = () => {
           location: data.location, 
           website: data.website
         });
+      } else if (error) {
+        console.error("Profile fetch error:", error);
       }
     } catch (err) { console.error(err); }
   };
@@ -116,6 +136,11 @@ const App: React.FC = () => {
     setAuthError('');
     setIsSubmittingAuth(true);
     const sanitizedMobile = authFormData.mobile.trim().replace(/[^0-9]/g, '');
+    if (sanitizedMobile.length < 10) {
+      setAuthError("Enter a valid mobile number.");
+      setIsSubmittingAuth(false);
+      return;
+    }
     const proxyEmail = `${sanitizedMobile}@lumina.app`;
     
     try {
@@ -124,13 +149,14 @@ const App: React.FC = () => {
         if (error) throw error;
         if (data.user) {
           const username = authFormData.fullName.toLowerCase().replace(/\s+/g, '_') + Math.floor(Math.random() * 100);
-          await supabase.from('profiles').insert({ 
+          const { error: profileError } = await supabase.from('profiles').insert({ 
             id: data.user.id, 
             username, 
             full_name: authFormData.fullName, 
             mobile: sanitizedMobile, 
             avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}` 
           });
+          if (profileError) throw profileError;
           await fetchProfile(data.user.id);
         }
       } else {
@@ -139,7 +165,7 @@ const App: React.FC = () => {
         if (data.user) await fetchProfile(data.user.id);
       }
     } catch (err: any) { 
-      setAuthError(err.message); 
+      setAuthError(err.message || "Auth failed. Try again."); 
     } finally {
       setIsSubmittingAuth(false);
     }
@@ -274,10 +300,11 @@ const App: React.FC = () => {
       <div className="flex flex-col items-center animate-in zoom-in-95 duration-500">
         <h1 className="brand-font text-8xl font-bold brand-text-gradient animate-pulse-fast">Lumina</h1>
         <div className="mt-8 flex items-center space-x-2">
-          <div className="w-2 h-2 bg-brand-primary rounded-full animate-bounce"></div>
-          <div className="w-2 h-2 bg-brand-primary rounded-full animate-bounce [animation-delay:0.2s]"></div>
-          <div className="w-2 h-2 bg-brand-primary rounded-full animate-bounce [animation-delay:0.4s]"></div>
+          <div className="w-2.5 h-2.5 bg-brand-primary rounded-full animate-bounce"></div>
+          <div className="w-2.5 h-2.5 bg-brand-primary rounded-full animate-bounce [animation-delay:0.2s]"></div>
+          <div className="w-2.5 h-2.5 bg-brand-primary rounded-full animate-bounce [animation-delay:0.4s]"></div>
         </div>
+        <p className="mt-6 text-[10px] font-black uppercase tracking-[0.3em] text-gray-400 opacity-60">Ready to glow</p>
       </div>
     </div>
   );
@@ -286,16 +313,17 @@ const App: React.FC = () => {
     <div className="h-full bg-white dark:bg-slate-950 flex flex-col items-center justify-center p-6 overflow-y-auto">
       <div className="w-full max-w-md space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500 py-12">
         <h1 className="brand-font text-7xl font-bold brand-text-gradient text-center">Lumina</h1>
-        {authError && <div className="bg-red-50 text-red-600 p-5 rounded-3xl text-sm font-bold border border-red-100 animate-in shake-in">{authError}</div>}
+        {authError && <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-5 rounded-3xl text-sm font-bold border border-red-100 dark:border-red-900/40 animate-in shake-in">{authError}</div>}
         <form onSubmit={handleAuthSubmit} className="space-y-4">
-          {isRegistering && <input type="text" placeholder="Full Name" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none" value={authFormData.fullName} onChange={(e) => setAuthFormData({...authFormData, fullName: e.target.value})} />}
-          <input type="tel" placeholder="Mobile Number" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none" value={authFormData.mobile} onChange={(e) => setAuthFormData({...authFormData, mobile: e.target.value})} />
-          <input type="password" placeholder="Password" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none" value={authFormData.password} onChange={(e) => setAuthFormData({...authFormData, password: e.target.value})} />
-          <button type="submit" disabled={isSubmittingAuth} className="w-full bg-brand-gradient text-white py-5 rounded-3xl font-black shadow-xl active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center space-x-2">
-            {isSubmittingAuth ? 'Processing...' : (isRegistering ? 'Create Account' : 'Sign In')}
+          {isRegistering && <input type="text" placeholder="Full Name" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none focus:ring-2 focus:ring-brand-primary transition-all" value={authFormData.fullName} onChange={(e) => setAuthFormData({...authFormData, fullName: e.target.value})} />}
+          <input type="tel" placeholder="Mobile Number" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none focus:ring-2 focus:ring-brand-primary transition-all" value={authFormData.mobile} onChange={(e) => setAuthFormData({...authFormData, mobile: e.target.value})} />
+          <input type="password" placeholder="Password" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none focus:ring-2 focus:ring-brand-primary transition-all" value={authFormData.password} onChange={(e) => setAuthFormData({...authFormData, password: e.target.value})} />
+          <button type="submit" disabled={isSubmittingAuth} className="w-full bg-brand-gradient text-white py-5 rounded-3xl font-black shadow-xl active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center space-x-2 group">
+            <span>{isSubmittingAuth ? 'Processing...' : (isRegistering ? 'Create Account' : 'Sign In')}</span>
+            {!isSubmittingAuth && <ICONS.ChevronLeft className="w-5 h-5 rotate-180 group-hover:translate-x-1 transition-transform" />}
           </button>
         </form>
-        <button onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); }} className="w-full text-center text-sm font-black text-brand-primary uppercase tracking-widest">
+        <button onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); }} className="w-full text-center text-sm font-black text-brand-primary dark:text-brand-secondary uppercase tracking-widest hover:opacity-80 transition-opacity">
           {isRegistering ? 'Already a member? Login' : "New to Lumina? Join the glow"}
         </button>
       </div>
@@ -308,10 +336,10 @@ const App: React.FC = () => {
         <aside className="hidden md:flex flex-col w-72 bg-white dark:bg-slate-900 border-r dark:border-slate-800 p-6 h-screen sticky top-0">
           <h1 className="brand-font text-4xl font-bold brand-text-gradient mb-12 cursor-pointer" onClick={() => handleTabChange('home')}>Lumina</h1>
           <nav className="flex-1 space-y-2">
-             <button onClick={() => handleTabChange('home')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl ${activeTab === 'home' ? 'bg-brand-primary/10 text-brand-primary' : ''}`}><ICONS.Home className="w-6 h-6" /><span>Home</span></button>
-             <button onClick={() => handleTabChange('chat')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl ${activeTab === 'chat' ? 'bg-brand-primary/10 text-brand-primary' : ''}`}><ICONS.Chat className="w-6 h-6" /><span>Messages</span></button>
-             <button onClick={() => handleTabChange('friends')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl ${activeTab === 'friends' ? 'bg-brand-primary/10 text-brand-primary' : ''}`}><ICONS.Friends className="w-6 h-6" /><span>Community</span></button>
-             <button onClick={() => handleTabChange('profile')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl ${activeTab === 'profile' ? 'bg-brand-primary/10 text-brand-primary' : ''}`}><img src={currentUser.avatar} className="w-6 h-6 rounded-full" /><span>Profile</span></button>
+             <button onClick={() => handleTabChange('home')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl transition-all ${activeTab === 'home' ? 'bg-brand-primary/10 text-brand-primary' : 'hover:bg-gray-50 dark:hover:bg-slate-800'}`}><ICONS.Home className="w-6 h-6" /><span>Home</span></button>
+             <button onClick={() => handleTabChange('chat')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl transition-all ${activeTab === 'chat' ? 'bg-brand-primary/10 text-brand-primary' : 'hover:bg-gray-50 dark:hover:bg-slate-800'}`}><ICONS.Chat className="w-6 h-6" /><span>Messages</span></button>
+             <button onClick={() => handleTabChange('friends')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl transition-all ${activeTab === 'friends' ? 'bg-brand-primary/10 text-brand-primary' : 'hover:bg-gray-50 dark:hover:bg-slate-800'}`}><ICONS.Friends className="w-6 h-6" /><span>Community</span></button>
+             <button onClick={() => handleTabChange('profile')} className={`w-full flex items-center space-x-4 p-4 rounded-2xl transition-all ${activeTab === 'profile' ? 'bg-brand-primary/10 text-brand-primary' : 'hover:bg-gray-50 dark:hover:bg-slate-800'}`}><img src={currentUser.avatar} className="w-6 h-6 rounded-full" /><span>Profile</span></button>
           </nav>
         </aside>
 
@@ -327,17 +355,17 @@ const App: React.FC = () => {
               {activeTab === 'home' && (
                 <div className="space-y-8 animate-in fade-in duration-700">
                   <div className="flex space-x-4 overflow-x-auto no-scrollbar py-6 px-4">
-                    <div onClick={() => setShowCreateStoryModal(true)} className="flex flex-col items-center space-y-2 cursor-pointer min-w-[85px]">
+                    <div onClick={() => setShowCreateStoryModal(true)} className="flex flex-col items-center space-y-2 cursor-pointer min-w-[85px] group">
                       <div className="relative w-[75px] h-[75px]">
-                        <img src={currentUser.avatar} className="w-full h-full rounded-full object-cover border-2 border-white dark:border-slate-900" />
-                        <div className="absolute bottom-0 right-0 bg-brand-secondary text-white rounded-full p-1 border-2 border-white dark:border-slate-900"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3" d="M12 4v16m8-8H4"></path></svg></div>
+                        <img src={currentUser.avatar} className="w-full h-full rounded-full object-cover border-2 border-white dark:border-slate-900 transition-transform group-hover:scale-105" />
+                        <div className="absolute bottom-0 right-0 bg-brand-secondary text-white rounded-full p-1 border-2 border-white dark:border-slate-900 shadow-md"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="3.5" d="M12 4v16m8-8H4"></path></svg></div>
                       </div>
-                      <span className="text-[10px] font-black uppercase text-gray-400">Your Story</span>
+                      <span className="text-[10px] font-black uppercase text-gray-400 tracking-tighter">Your Story</span>
                     </div>
                     {stories.map(s => (
                       <div key={s.id} onClick={() => setActiveStory(s)} className="flex flex-col items-center space-y-2 cursor-pointer min-w-[85px]">
                         <div className="w-[75px] h-[75px] rounded-full story-ring"><img src={s.user.avatar} className="w-full h-full rounded-full border-2 border-white dark:border-slate-900 object-cover bg-white" /></div>
-                        <span className="text-[10px] font-black truncate w-full text-center uppercase text-gray-600 dark:text-gray-300">{s.user.username}</span>
+                        <span className="text-[10px] font-black truncate w-full text-center uppercase text-gray-600 dark:text-gray-300 tracking-tighter">{s.user.username}</span>
                       </div>
                     ))}
                   </div>
@@ -346,8 +374,8 @@ const App: React.FC = () => {
                       posts.map(post => <PostCard key={post.id} post={post} currentUser={currentUser} onLike={handleLike} onSave={() => {}} onComment={() => setViewingCommentsPost(post)} onUserClick={() => {}} onDelete={fetchPosts} onEdit={() => {}} onOpenComments={setViewingCommentsPost} onPhotoClick={setSelectedPostDetail} />)
                     ) : (
                       <div className="py-20 text-center opacity-40 flex flex-col items-center space-y-4">
-                        <ICONS.Create className="w-16 h-16" />
-                        <p className="font-bold">Be the first to share a moment!</p>
+                        <div className="w-20 h-20 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center"><ICONS.Create className="w-10 h-10" /></div>
+                        <p className="font-bold text-sm tracking-widest uppercase">Be the first to share a moment!</p>
                       </div>
                     )}
                   </div>
@@ -370,7 +398,7 @@ const App: React.FC = () => {
                     </div>
                     <div className="flex-1 overflow-y-auto no-scrollbar p-2">
                       {conversations.length > 0 ? conversations.map(u => (
-                        <div key={u.id} onClick={() => handleStartChat(u)} className={`flex items-center space-x-4 p-4 rounded-[1.5rem] cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-900 ${selectedChatUser?.id === u.id ? 'bg-brand-primary/10' : ''}`}>
+                        <div key={u.id} onClick={() => handleStartChat(u)} className={`flex items-center space-x-4 p-4 rounded-[1.5rem] cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-900 ${selectedChatUser?.id === u.id ? 'bg-brand-primary/10 shadow-inner' : ''}`}>
                           <img src={u.avatar} className="w-14 h-14 rounded-full object-cover shadow-sm border dark:border-slate-700" />
                           <div className="flex-1 min-w-0">
                             <p className="font-bold text-sm truncate">{u.fullName}</p>
@@ -417,7 +445,7 @@ const App: React.FC = () => {
                     ) : (
                       <div className="flex-1 flex flex-col items-center justify-center opacity-20">
                         <ICONS.Chat className="w-20 h-20 mb-4" />
-                        <p className="font-black text-xl">Select a conversation to start glowing</p>
+                        <p className="font-black text-xl tracking-widest uppercase">Select a chat to start glowing</p>
                       </div>
                     )}
                   </div>
@@ -431,7 +459,7 @@ const App: React.FC = () => {
                     {allUsers.map(user => (
                       <div key={user.id} className="bg-white dark:bg-slate-900 border dark:border-slate-800 rounded-[2.5rem] p-6 shadow-sm flex flex-col items-center text-center hover:shadow-xl transition-all group">
                         <div className="w-20 h-20 rounded-full mb-4 relative p-1 border-2 border-brand-primary/20 group-hover:border-brand-primary transition-colors">
-                          <img src={user.avatar} className="w-full h-full rounded-full object-cover" />
+                          <img src={user.avatar} className="w-full h-full rounded-full object-cover shadow-inner" />
                         </div>
                         <h3 className="font-black text-lg">{user.fullName}</h3>
                         <p className="text-brand-primary font-bold text-xs mb-6">@{user.username}</p>
@@ -454,12 +482,12 @@ const App: React.FC = () => {
                        </div>
                        <div className="flex space-x-2 mt-6 md:mt-0">
                          <button onClick={() => setShowEditProfileModal(true)} className="px-8 py-3.5 bg-brand-gradient text-white rounded-2xl font-black text-sm shadow-xl active:scale-95 transition-transform">Edit Identity</button>
-                         <button onClick={handleLogout} className="p-3.5 bg-gray-100 dark:bg-slate-800 rounded-2xl active:scale-95 transition-transform"><svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg></button>
+                         <button onClick={handleLogout} className="p-3.5 bg-gray-100 dark:bg-slate-800 rounded-2xl active:scale-95 transition-transform hover:bg-red-50 dark:hover:bg-red-900/10 group"><svg className="w-6 h-6 text-gray-400 group-hover:text-red-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg></button>
                        </div>
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                       {posts.filter(p => p.user.id === currentUser.id).map(p => (
-                        <div key={p.id} onClick={() => setSelectedPostDetail(p)} className="aspect-square rounded-2xl overflow-hidden cursor-pointer border dark:border-slate-800 hover:scale-[1.02] transition-transform"><img src={p.imageUrl} className="w-full h-full object-cover" /></div>
+                        <div key={p.id} onClick={() => setSelectedPostDetail(p)} className="aspect-square rounded-2xl overflow-hidden cursor-pointer border dark:border-slate-800 hover:scale-[1.02] transition-transform shadow-sm"><img src={p.imageUrl} className="w-full h-full object-cover" /></div>
                       ))}
                     </div>
                   </div>
