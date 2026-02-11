@@ -1,5 +1,5 @@
 {
-  "name": "Copy of Lumina app ND v6",
+  "name": "Main Lumina app",
   "description": "A modern social media platform for visual storytelling, featuring AI-powered caption generation and magic image creation.",
   "requestFramePermissions": [
     "camera"
