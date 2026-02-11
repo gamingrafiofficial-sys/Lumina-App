@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en" class="light">
   <head>
@@ -49,12 +50,12 @@
         -ms-overflow-style: none;
         scrollbar-width: none;
       }
-      @keyframes pulse-soft {
+      @keyframes pulse-fast {
         0%, 100% { transform: scale(1); opacity: 1; }
-        50% { transform: scale(1.05); opacity: 0.9; }
+        50% { transform: scale(1.1); opacity: 0.8; }
       }
-      .animate-pulse-soft {
-        animation: pulse-soft 2.5s infinite ease-in-out;
+      .animate-pulse-fast {
+        animation: pulse-fast 1s infinite ease-in-out;
       }
       .story-ring {
         background: linear-gradient(45deg, #006747 0%, #DA291C 100%);
@@ -67,6 +68,14 @@
       }
       .bg-brand-gradient {
         background: linear-gradient(135deg, #006747 0%, #DA291C 100%);
+      }
+      /* Quick transition for splash */
+      .splash-exit {
+        animation: fadeOut 0.5s forwards;
+      }
+      @keyframes fadeOut {
+        from { opacity: 1; }
+        to { opacity: 0; visibility: hidden; }
       }
     </style>
     <script type="importmap">

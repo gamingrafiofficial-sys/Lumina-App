@@ -62,16 +62,19 @@ const App: React.FC = () => {
   const STORY_TTL = 24 * 60 * 60 * 1000;
 
   useEffect(() => {
+    // Strict 1-second splash screen timer
+    const timer = setTimeout(() => {
+      setSessionLoading(false);
+    }, 1000);
+
     const initializeAuth = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
           await fetchProfile(session.user.id);
-        } else {
-          setSessionLoading(false);
         }
       } catch (err) {
-        setSessionLoading(false);
+        console.error("Auth init error:", err);
       }
     };
 
@@ -82,11 +85,13 @@ const App: React.FC = () => {
         await fetchProfile(session.user.id);
       } else {
         setCurrentUser(null);
-        setSessionLoading(false);
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(timer);
+      subscription.unsubscribe();
+    };
   }, []);
 
   const fetchProfile = async (userId: string) => {
@@ -98,7 +103,6 @@ const App: React.FC = () => {
         .maybeSingle();
 
       if (error || !data) {
-        // If profile doesn't exist, don't hang, provide a fallback user
         if (!data) {
           const fallbackUser: User = {
             id: userId,
@@ -108,10 +112,8 @@ const App: React.FC = () => {
             bio: "Welcome to Lumina!"
           };
           setCurrentUser(fallbackUser);
-          setSessionLoading(false);
           return;
         }
-        setSessionLoading(false);
         return;
       }
       
@@ -130,8 +132,6 @@ const App: React.FC = () => {
       setCurrentUser(user);
     } catch (err) {
       console.error("Profile fetch error:", err);
-    } finally {
-      setSessionLoading(false);
     }
   };
 
@@ -141,12 +141,6 @@ const App: React.FC = () => {
     setIsSubmittingAuth(true);
 
     const sanitizedMobile = authFormData.mobile.trim().replace(/[^0-9]/g, '');
-    if (sanitizedMobile.length < 5) {
-      setAuthError('Invalid mobile number');
-      setIsSubmittingAuth(false);
-      return;
-    }
-
     const proxyEmail = `${sanitizedMobile}@lumina.app`;
 
     try {
@@ -164,6 +158,7 @@ const App: React.FC = () => {
 
         if (error) {
           setAuthError(error.message);
+          setIsSubmittingAuth(false);
         } else if (data.user) {
           const username = authFormData.fullName.toLowerCase().replace(/\s+/g, '_') + Math.floor(Math.random() * 100);
           await supabase.from('profiles').insert({
@@ -175,6 +170,11 @@ const App: React.FC = () => {
             avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`
           });
           await fetchProfile(data.user.id);
+          // Transition within 1 second after registration
+          setTimeout(() => {
+            setActiveTab('home');
+            setIsSubmittingAuth(false);
+          }, 800);
         }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -183,89 +183,25 @@ const App: React.FC = () => {
         });
 
         if (error) {
-          setAuthError('Login failed. Check your number/password.');
+          setAuthError('Invalid credentials');
+          setIsSubmittingAuth(false);
         } else if (data.user) {
-          // Immediately fetch profile and switch UI
+          // Immediately fetch profile
           await fetchProfile(data.user.id);
-          setActiveTab('home');
+          // High-speed transition to home
+          setTimeout(() => {
+            setActiveTab('home');
+            setIsSubmittingAuth(false);
+          }, 800);
         }
       }
     } catch (err) {
       setAuthError("Connection error.");
-    } finally {
       setIsSubmittingAuth(false);
     }
   };
 
-  useEffect(() => {
-    const searchUsers = async () => {
-      const query = chatSearchQuery.trim();
-      if (!query) {
-        setChatSearchResults([]);
-        return;
-      }
-      setIsSearchingChat(true);
-      try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .or(`full_name.ilike.%${query}%,username.ilike.%${query}%,mobile.ilike.%${query}%`)
-          .neq('id', currentUser?.id)
-          .limit(12);
-        if (!error && data) {
-          setChatSearchResults(data.map(u => ({
-            id: u.id,
-            username: u.username,
-            fullName: u.full_name,
-            mobile: u.mobile,
-            avatar: u.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.username}`,
-            bio: u.bio,
-            work: u.work,
-            location: u.location,
-            website: u.website
-          })));
-        }
-      } finally {
-        setIsSearchingChat(false);
-      }
-    };
-    const timer = setTimeout(searchUsers, 350);
-    return () => clearTimeout(timer);
-  }, [chatSearchQuery, currentUser?.id]);
-
-  useEffect(() => {
-    if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages]);
-
-  useEffect(() => {
-    if (!currentUser) return;
-    const channel = supabase
-      .channel('global_realtime')
-      .on('postgres_changes', { event: '*', table: 'posts' }, () => fetchPosts())
-      .on('postgres_changes', { event: 'INSERT', table: 'stories' }, () => fetchStories())
-      .on('postgres_changes', { event: 'INSERT', table: 'messages', filter: `receiver_id=eq.${currentUser.id}` }, async (payload) => {
-          if (selectedChatUser && payload.new.sender_id === selectedChatUser.id) {
-              setChatMessages(prev => [...prev, payload.new as any]);
-          }
-          fetchConversations();
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [currentUser, selectedChatUser]);
-
-  useEffect(() => {
-    localStorage.setItem('lumina_theme', theme);
-    const html = document.documentElement;
-    theme === 'dark' ? html.classList.add('dark') : html.classList.remove('dark');
-  }, [theme]);
-
-  useEffect(() => {
-    if (toast) {
-      const timer = setTimeout(() => setToast(null), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [toast]);
-
+  // Helper effect to load initial data once logged in
   useEffect(() => {
     if (currentUser) {
       fetchPosts();
@@ -396,7 +332,7 @@ const App: React.FC = () => {
       setCurrentUser(null);
       localStorage.removeItem('lumina_user');
       setShowMenu(false);
-      setToast({ message: 'Logged out safely.', type: 'success' });
+      setToast({ message: 'Logged out.', type: 'success' });
       setActiveTab('home');
     } catch (error) {
       console.error("Logout failed:", error);
@@ -429,14 +365,14 @@ const App: React.FC = () => {
 
   if (sessionLoading) return (
     <div className="fixed inset-0 bg-white dark:bg-slate-950 flex flex-col items-center justify-center z-[200]">
-      <h1 className="brand-font text-7xl font-bold brand-text-gradient animate-pulse-soft">Lumina</h1>
+      <h1 className="brand-font text-7xl font-bold brand-text-gradient animate-pulse-fast">Lumina</h1>
     </div>
   );
 
   if (!currentUser) return (
     <div className="h-full flex flex-col md:flex-row bg-white dark:bg-slate-950 overflow-hidden">
       <div className="w-full md:w-1/2 flex items-center justify-center p-6 md:p-12 z-10">
-        <div className="w-full max-w-md space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="w-full max-w-md space-y-10 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <h1 className="brand-font text-6xl md:text-7xl font-bold brand-text-gradient mb-2 text-center md:text-left">Lumina</h1>
           {authError && <div className="bg-red-50 text-red-600 p-5 rounded-[1.5rem] text-sm font-bold border border-red-100 animate-in shake-in duration-300">{authError}</div>}
           <form onSubmit={handleAuthSubmit} className="space-y-4">
@@ -494,7 +430,7 @@ const App: React.FC = () => {
           <main className="flex-1 overflow-y-auto no-scrollbar scroll-smooth">
             <div className={`w-full mx-auto p-0 ${activeTab === 'chat' ? 'h-full' : 'max-w-[1200px] md:p-8'}`}>
               {activeTab === 'home' && (
-                <div className="space-y-8">
+                <div className="space-y-8 animate-in fade-in duration-700">
                   <div className="flex space-x-4 overflow-x-auto no-scrollbar py-6 px-4">
                     <div onClick={() => setShowCreateStoryModal(true)} className="flex flex-col items-center space-y-2 cursor-pointer min-w-[85px]">
                       <div className="relative w-[75px] h-[75px]">
@@ -531,21 +467,12 @@ const App: React.FC = () => {
                         </div>
                       </div>
                     ))}
-                    {posts.filter(p => p.isSaved).length === 0 && (
-                      <div className="col-span-full py-32 flex flex-col items-center justify-center opacity-30 text-center">
-                         <div className="w-24 h-24 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-6">
-                           <ICONS.Bookmark className="w-12 h-12" />
-                         </div>
-                         <h3 className="text-xl font-black uppercase tracking-widest">No Saved Light</h3>
-                         <p className="text-sm mt-2 max-w-xs mx-auto">Moments you bookmark will appear here for you to revisit anytime.</p>
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
 
               {activeTab === 'chat' && (
-                <div className="h-full flex flex-col md:flex-row bg-white dark:bg-slate-950 md:rounded-3xl overflow-hidden md:border dark:border-slate-800 md:m-4 shadow-2xl">
+                <div className="h-full flex flex-col md:flex-row bg-white dark:bg-slate-950 md:rounded-3xl overflow-hidden md:border dark:border-slate-800 md:m-4 shadow-2xl animate-in zoom-in-95 duration-500">
                   <div className={`w-full md:w-96 border-r dark:border-slate-800 flex flex-col ${selectedChatUser ? 'hidden md:flex' : 'flex'}`}>
                     <div className="p-6 border-b dark:border-slate-800 space-y-4">
                       <div className="flex items-center space-x-3">
@@ -554,63 +481,34 @@ const App: React.FC = () => {
                       </div>
                       <div className="relative">
                         <ICONS.Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                        <input type="text" placeholder="Search name, user or mobile..." className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-slate-900 border-none rounded-2xl text-sm outline-none focus:ring-2 focus:ring-brand-primary dark:text-white" value={chatSearchQuery} onChange={(e) => setChatSearchQuery(e.target.value)} />
+                        <input type="text" placeholder="Search..." className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-slate-900 border-none rounded-2xl text-sm outline-none" value={chatSearchQuery} onChange={(e) => setChatSearchQuery(e.target.value)} />
                       </div>
                     </div>
                     <div className="flex-1 overflow-y-auto no-scrollbar p-2">
-                      {isSearchingChat && (
-                        <div className="p-10 text-center"><div className="w-8 h-8 border-2 border-brand-primary border-t-transparent rounded-full animate-spin mx-auto"></div></div>
-                      )}
-                      
-                      {!isSearchingChat && chatSearchQuery.trim() !== '' && (
-                        <div className="mb-4">
-                           <p className="px-4 py-2 text-[10px] font-black text-gray-400 uppercase tracking-widest">Global Search</p>
-                           {chatSearchResults.map(u => (
-                            <div key={u.id} onClick={() => handleStartChat(u)} className="flex items-center space-x-4 p-4 rounded-[1.5rem] cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-900">
-                              <img src={u.avatar} className="w-12 h-12 rounded-full object-cover" alt="" />
-                              <div className="flex-1 min-w-0">
-                                <p className="font-bold text-sm truncate">{u.fullName}</p>
-                                <p className="text-xs text-gray-500 truncate">@{u.username} {u.mobile ? `• ${u.mobile}` : ''}</p>
-                              </div>
-                            </div>
-                           ))}
-                           {chatSearchResults.length === 0 && <p className="p-6 text-center text-sm text-gray-400 italic">No users found</p>}
+                      {conversations.map(u => (
+                        <div key={u.id} onClick={() => handleStartChat(u)} className={`flex items-center space-x-4 p-4 rounded-[1.5rem] cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-900 ${selectedChatUser?.id === u.id ? 'bg-brand-primary/10' : ''}`}>
+                          <img src={u.avatar} className="w-14 h-14 rounded-full object-cover" alt="" />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-sm truncate">{u.fullName}</p>
+                            <p className="text-xs text-gray-500 truncate font-medium">@{u.username}</p>
+                          </div>
                         </div>
-                      )}
-
-                      {chatSearchQuery.trim() === '' && (
-                        <div>
-                           <p className="px-4 py-2 text-[10px] font-black text-gray-400 uppercase tracking-widest">Recent Chats</p>
-                           {conversations.map(u => (
-                            <div key={u.id} onClick={() => handleStartChat(u)} className={`flex items-center space-x-4 p-4 rounded-[1.5rem] cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-900 ${selectedChatUser?.id === u.id ? 'bg-brand-primary/10' : ''}`}>
-                              <img src={u.avatar} className="w-14 h-14 rounded-full object-cover" alt="" />
-                              <div className="flex-1 min-w-0">
-                                <p className="font-bold text-sm truncate">{u.fullName}</p>
-                                <p className="text-xs text-gray-500 truncate font-medium">@{u.username}</p>
-                              </div>
-                            </div>
-                           ))}
-                           {conversations.length === 0 && <p className="p-10 text-center text-sm text-gray-400 opacity-50">Search for people to start a chat</p>}
-                        </div>
-                      )}
+                      ))}
                     </div>
                   </div>
                   <div className={`flex-1 flex flex-col h-full bg-white dark:bg-slate-950 ${selectedChatUser ? 'fixed inset-0 z-[100] md:relative md:z-auto' : 'hidden md:flex'}`}>
                     {selectedChatUser ? (
                       <>
-                        <div className="p-4 md:p-5 border-b dark:border-slate-800 flex items-center justify-between bg-white dark:bg-slate-950/90 backdrop-blur-xl z-20">
+                        <div className="p-4 md:p-5 border-b dark:border-slate-800 flex items-center justify-between">
                           <div className="flex items-center space-x-4">
                             <button onClick={() => setSelectedChatUser(null)} className="md:hidden p-2.5 bg-gray-100 dark:bg-slate-800 rounded-2xl"><ICONS.ChevronLeft className="w-6 h-6" /></button>
                             <img src={selectedChatUser.avatar} className="w-10 h-10 md:w-12 md:h-12 rounded-full object-cover" alt="" />
-                            <div>
-                               <p className="font-black text-sm md:text-base leading-tight">{selectedChatUser.fullName}</p>
-                               <p className="text-[10px] font-bold text-gray-400">@{selectedChatUser.username}</p>
-                            </div>
+                            <p className="font-black text-sm md:text-base">{selectedChatUser.fullName}</p>
                           </div>
                         </div>
                         <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
                           {chatMessages.map((m, idx) => (
-                            <div key={m.id || idx} className={`flex flex-col ${m.sender_id === currentUser.id ? 'items-end' : 'items-start'}`}>
+                            <div key={idx} className={`flex flex-col ${m.sender_id === currentUser.id ? 'items-end' : 'items-start'}`}>
                               <div className={`max-w-[85%] px-5 py-3.5 rounded-[1.5rem] text-sm font-medium shadow-sm ${m.sender_id === currentUser.id ? 'bg-brand-gradient text-white rounded-br-none' : 'bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 rounded-bl-none border dark:border-slate-700'}`}>
                                 {m.text}
                               </div>
@@ -618,9 +516,9 @@ const App: React.FC = () => {
                           ))}
                           <div ref={chatEndRef} />
                         </div>
-                        <div className="p-4 md:p-6 border-t dark:border-slate-800 bg-white dark:bg-slate-950">
+                        <div className="p-4 md:p-6 border-t dark:border-slate-800">
                           <div className="flex items-end space-x-3 max-w-4xl mx-auto">
-                            <textarea rows={1} placeholder="Type a message..." className="flex-1 bg-gray-50 dark:bg-slate-900 px-6 py-4 rounded-[1.5rem] outline-none border-none dark:text-white shadow-inner resize-none font-medium" value={messageInput} onChange={(e) => setMessageInput(e.target.value)} onKeyPress={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} />
+                            <textarea rows={1} placeholder="Message..." className="flex-1 bg-gray-50 dark:bg-slate-900 px-6 py-4 rounded-[1.5rem] outline-none border-none shadow-inner resize-none" value={messageInput} onChange={(e) => setMessageInput(e.target.value)} />
                             <button onClick={sendMessage} disabled={!messageInput.trim()} className="w-14 h-14 bg-brand-gradient text-white rounded-2xl flex items-center justify-center shadow-xl disabled:opacity-20"><ICONS.Share className="w-6 h-6" /></button>
                           </div>
                         </div>
@@ -641,7 +539,7 @@ const App: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-24">
                     {allUsers.map(user => (
                       <div key={user.id} className="bg-white dark:bg-slate-900 border dark:border-slate-800 rounded-[2.5rem] p-6 shadow-sm flex flex-col items-center text-center">
-                        <img src={user.avatar} className="w-20 h-20 rounded-full mb-4 object-cover border-4 border-gray-50 dark:border-slate-800" alt="" />
+                        <img src={user.avatar} className="w-20 h-20 rounded-full mb-4 object-cover" alt="" />
                         <h3 className="font-black text-lg">{user.fullName}</h3>
                         <p className="text-brand-primary font-bold text-xs mb-4">@{user.username}</p>
                         <div className="flex w-full space-x-2">
@@ -664,51 +562,15 @@ const App: React.FC = () => {
                           <h2 className="text-4xl font-black tracking-tighter mb-1">{currentUser.fullName}</h2>
                           <p className="text-brand-primary font-black uppercase tracking-widest text-sm">@{currentUser.username}</p>
                        </div>
-                       <div className="flex items-center space-x-3 mt-6 md:mt-0">
-                          <button onClick={() => setShowEditProfileModal(true)} className="px-8 py-3.5 bg-brand-gradient text-white rounded-2xl font-black text-sm shadow-xl">Edit Identity</button>
-                       </div>
+                       <button onClick={() => setShowEditProfileModal(true)} className="mt-6 md:mt-0 px-8 py-3.5 bg-brand-gradient text-white rounded-2xl font-black text-sm shadow-xl">Edit Identity</button>
                     </div>
                     
-                    <div className="max-w-2xl space-y-6 mb-12">
-                       <p className="text-gray-700 dark:text-gray-300 font-medium leading-relaxed text-lg italic border-l-4 border-brand-primary pl-4 py-1">
-                          {currentUser.bio || "Sharing light on Lumina ✨"}
-                       </p>
-                       
-                       <div className="flex flex-wrap gap-y-3 gap-x-6">
-                          {currentUser.work && (
-                            <div className="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
-                              <ICONS.Briefcase className="w-4 h-4" />
-                              <span className="text-sm font-bold">{currentUser.work}</span>
-                            </div>
-                          )}
-                          {currentUser.location && (
-                            <div className="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
-                              <ICONS.MapPin className="w-4 h-4" />
-                              <span className="text-sm font-bold">{currentUser.location}</span>
-                            </div>
-                          )}
-                          {currentUser.website && (
-                            <a href={currentUser.website.startsWith('http') ? currentUser.website : `https://${currentUser.website}`} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-2 text-brand-primary font-black">
-                              <ICONS.Link className="w-4 h-4" />
-                              <span className="text-sm truncate max-w-[200px]">{currentUser.website.replace(/(^\w+:|^)\/\//, '')}</span>
-                            </a>
-                          )}
-                       </div>
-                    </div>
-
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                       {posts.filter(p => p.user.id === currentUser.id).map(p => (
                         <div key={p.id} onClick={() => setSelectedPostDetail(p)} className="aspect-square rounded-2xl overflow-hidden cursor-pointer relative group border dark:border-slate-800">
                           <img src={p.imageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" alt="" />
-                          <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                         </div>
                       ))}
-                      {posts.filter(p => p.user.id === currentUser.id).length === 0 && (
-                        <div className="col-span-full py-20 text-center opacity-30">
-                           <ICONS.Magic className="w-16 h-16 mx-auto mb-4" />
-                           <p className="font-black uppercase tracking-widest text-sm">No posts yet</p>
-                        </div>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -718,13 +580,13 @@ const App: React.FC = () => {
           
           <Navbar onTabChange={handleTabChange} activeTab={activeTab} hiddenOnMobile={activeTab === 'chat' || activeTab === 'saved'} />
           
-          {showMenu && <Sidebar isOpen={showMenu} onClose={() => setShowMenu(false)} user={currentUser} onLogout={handleLogout} onThemeToggle={() => setTheme(theme === 'light' ? 'dark' : 'light')} onSavedClick={() => { setActiveTab('saved'); setShowMenu(false); }} currentTheme={theme} />}
-          {showCreateModal && <CreatePostModal onClose={() => setShowCreateModal(false)} onPost={async (img, cap) => { await supabase.from('posts').insert({ user_id: currentUser.id, image_url: img, caption: cap }); fetchPosts(); setActiveTab('home'); }} />}
+          {showMenu && <Sidebar isOpen={showMenu} onClose={() => setShowMenu(false)} user={currentUser!} onLogout={handleLogout} onThemeToggle={() => setTheme(theme === 'light' ? 'dark' : 'light')} onSavedClick={() => { setActiveTab('saved'); setShowMenu(false); }} currentTheme={theme} />}
+          {showCreateModal && <CreatePostModal onClose={() => setShowCreateModal(false)} onPost={async (img, cap) => { await supabase.from('posts').insert({ user_id: currentUser!.id, image_url: img, caption: cap }); fetchPosts(); setActiveTab('home'); }} />}
           {showCreateStoryModal && <CreateStoryModal onClose={() => setShowCreateStoryModal(false)} onPost={handlePostStory} />}
           {showEditProfileModal && currentUser && <EditProfileModal user={currentUser} onClose={() => setShowEditProfileModal(false)} onUpdate={handleUpdateProfile} />}
           {activeStory && <StoryViewer story={activeStory} onClose={() => setActiveStory(null)} />}
           {selectedPostDetail && <PostDetailModal post={selectedPostDetail} currentUser={currentUser} onClose={() => setSelectedPostDetail(null)} onLike={handleLike} onSave={handleSavePost} onOpenComments={setViewingCommentsPost} />}
-          {viewingCommentsPost && <CommentPage post={viewingCommentsPost} currentUser={currentUser} onClose={() => setViewingCommentsPost(null)} onAddComment={async (pid, txt) => { await supabase.from('comments').insert({ post_id: pid, user_id: currentUser.id, text: txt }); fetchPosts(); }} />}
+          {viewingCommentsPost && <CommentPage post={viewingCommentsPost} currentUser={currentUser} onClose={() => setViewingCommentsPost(null)} onAddComment={async (pid, txt) => { await supabase.from('comments').insert({ post_id: pid, user_id: currentUser!.id, text: txt }); fetchPosts(); }} />}
         </div>
       </div>
     </Router>
