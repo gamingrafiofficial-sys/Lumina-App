@@ -11,6 +11,7 @@ import EditProfileModal from './components/EditProfileModal';
 import CreateStoryModal from './components/CreateStoryModal';
 import StoryViewer from './components/StoryViewer';
 import CommentPage from './components/CommentPage';
+import SearchModal from './components/SearchModal';
 import { ICONS } from './constants';
 import { Post, User, Comment, Story } from './types';
 import { supabase } from './lib/supabase';
@@ -45,10 +46,18 @@ const App: React.FC = () => {
   const [selectedPostDetail, setSelectedPostDetail] = useState<Post | null>(null);
   const [showMenu, setShowMenu] = useState(false);
   
+  // Chat States
   const [selectedChatUser, setSelectedChatUser] = useState<User | null>(null);
   const [chatMessages, setChatMessages] = useState<{id: string, sender_id: string, text: string, created_at: string}[]>([]);
   const [messageInput, setMessageInput] = useState('');
   const [conversations, setConversations] = useState<User[]>([]);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Search States
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<User[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
 
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
@@ -58,55 +67,34 @@ const App: React.FC = () => {
 
   const STORY_TTL = 24 * 60 * 60 * 1000;
 
-  // Initialize App
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatMessages]);
+
   useEffect(() => {
     const init = async () => {
-      // Splash screen minimum 1s
       const timer = setTimeout(() => setSessionLoading(false), 1000);
-
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          await fetchProfile(session.user.id);
-        }
-      } catch (e) {
-        console.error("Initial session check failed", e);
-      }
-      
+        if (session?.user) await fetchProfile(session.user.id);
+      } catch (e) { console.error(e); }
       return () => clearTimeout(timer);
     };
-
     init();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session?.user) {
-        await fetchProfile(session.user.id);
-      } else {
-        setCurrentUser(null);
-      }
+      if (session?.user) await fetchProfile(session.user.id);
+      else setCurrentUser(null);
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
   const fetchProfile = async (userId: string) => {
     try {
-      // Timeout the database call after 3 seconds to prevent UI hang
-      const profilePromise = supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
-
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout')), 3000)
-      );
-
-      const result: any = await Promise.race([profilePromise, timeoutPromise]);
-      const { data, error } = result;
-
+      const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
       if (error || !data) {
-        // Safe Fallback: User exists in Auth but not in Profiles table yet
         setCurrentUser({
           id: userId,
           username: `user_${userId.substring(0, 5)}`,
@@ -116,7 +104,6 @@ const App: React.FC = () => {
         });
         return;
       }
-      
       setCurrentUser({
         id: data.id, 
         username: data.username, 
@@ -130,13 +117,7 @@ const App: React.FC = () => {
         website: data.website
       });
     } catch (err) {
-      // Ultimate Fallback
-      setCurrentUser({
-        id: userId,
-        username: `user_${userId.substring(0, 5)}`,
-        fullName: 'Lumina User',
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`,
-      });
+      setCurrentUser({ id: userId, username: 'user', fullName: 'Lumina User', avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}` });
     }
   };
 
@@ -144,75 +125,36 @@ const App: React.FC = () => {
     e.preventDefault();
     setAuthError('');
     setIsSubmittingAuth(true);
-
     const sanitizedMobile = authFormData.mobile.trim().replace(/[^0-9]/g, '');
     if (sanitizedMobile.length < 10) {
       setAuthError("Please enter a valid mobile number.");
       setIsSubmittingAuth(false);
       return;
     }
-    
     const proxyEmail = `${sanitizedMobile}@lumina.app`;
-
     try {
       if (isRegistering) {
-        const { data, error } = await supabase.auth.signUp({ 
-          email: proxyEmail, 
-          password: authFormData.password,
-          options: { data: { full_name: authFormData.fullName } }
-        });
-        
+        const { data, error } = await supabase.auth.signUp({ email: proxyEmail, password: authFormData.password });
         if (error) throw error;
-        
         if (data.user) {
           const username = authFormData.fullName.toLowerCase().replace(/\s+/g, '_') + Math.floor(Math.random() * 100);
-          // Attempt to create profile, but don't hang if it fails
-          await supabase.from('profiles').insert({
-            id: data.user.id, 
-            username, 
-            full_name: authFormData.fullName, 
-            mobile: sanitizedMobile,
-            avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`
-          }).select();
-          
+          await supabase.from('profiles').insert({ id: data.user.id, username, full_name: authFormData.fullName, mobile: sanitizedMobile, avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}` });
           await fetchProfile(data.user.id);
           triggerTransition();
         }
       } else {
-        const { data, error } = await supabase.auth.signInWithPassword({ 
-          email: proxyEmail, 
-          password: authFormData.password 
-        });
-        
-        if (error) {
-          if (error.message.includes('confirm')) {
-            throw new Error("Login failed. Check your credentials or contact support.");
-          }
-          throw error;
-        }
-
-        if (data.user) {
-          await fetchProfile(data.user.id);
-          triggerTransition();
-        }
+        const { data, error } = await supabase.auth.signInWithPassword({ email: proxyEmail, password: authFormData.password });
+        if (error) throw error;
+        if (data.user) { await fetchProfile(data.user.id); triggerTransition(); }
       }
-    } catch (err: any) {
-      console.error("Auth Error:", err);
-      setAuthError(err.message || "Connection failed. Please try again.");
-      setIsSubmittingAuth(false);
-    }
+    } catch (err: any) { setAuthError(err.message); setIsSubmittingAuth(false); }
   };
 
   const triggerTransition = () => {
     setIsTransitioning(true);
-    setTimeout(() => {
-      setActiveTab('home');
-      setIsSubmittingAuth(false);
-      setIsTransitioning(false);
-    }, 1000);
+    setTimeout(() => { setActiveTab('home'); setIsSubmittingAuth(false); setIsTransitioning(false); }, 1000);
   };
 
-  // Sync Database
   useEffect(() => {
     if (currentUser) {
       fetchPosts();
@@ -224,33 +166,18 @@ const App: React.FC = () => {
 
   const fetchPosts = async () => {
     try {
-      const { data, error } = await supabase.from('posts').select('*, profiles(*)').order('created_at', { ascending: false });
-      if (error) throw error;
+      const { data } = await supabase.from('posts').select('*, profiles(*)').order('created_at', { ascending: false });
       if (data) {
         const savedIds = JSON.parse(localStorage.getItem(`lumina_saved_${currentUser?.id}`) || '[]');
         const { data: userLikes } = await supabase.from('post_likes').select('post_id').eq('user_id', currentUser?.id);
         const likedPostIds = new Set(userLikes?.map(l => l.post_id) || []);
-        
         setPosts(data.map(p => ({
           id: p.id, 
-          user: { 
-            id: p.profiles?.id || '', 
-            username: p.profiles?.username || 'user', 
-            fullName: p.profiles?.full_name || 'Lumina User', 
-            avatar: p.profiles?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.profiles?.username || p.id}` 
-          },
-          imageUrl: p.image_url, 
-          caption: p.caption, 
-          likes: p.likes_count || 0, 
-          isLiked: likedPostIds.has(p.id), 
-          isSaved: savedIds.includes(p.id), 
-          timestamp: new Date(p.created_at).toLocaleDateString(),
-          comments: []
+          user: { id: p.profiles?.id || '', username: p.profiles?.username || 'user', fullName: p.profiles?.full_name || 'Lumina User', avatar: p.profiles?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.profiles?.username || p.id}` },
+          imageUrl: p.image_url, caption: p.caption, likes: p.likes_count || 0, isLiked: likedPostIds.has(p.id), isSaved: savedIds.includes(p.id), timestamp: new Date(p.created_at).toLocaleDateString(), comments: []
         })));
       }
-    } catch (e) {
-      console.error("Posts fetch failed", e);
-    }
+    } catch (e) { console.error(e); }
   };
 
   const fetchStories = async () => {
@@ -282,28 +209,70 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLike = async (postId: string) => {
+  const fetchChatMessages = async (userId: string) => {
     if (!currentUser) return;
-    const post = posts.find(p => p.id === postId);
-    if (!post) return;
-    const isLiked = !post.isLiked;
-    setPosts(prev => prev.map(p => p.id === postId ? { ...p, isLiked, likes: isLiked ? p.likes + 1 : p.likes - 1 } : p));
-    if (isLiked) await supabase.from('post_likes').insert({ post_id: postId, user_id: currentUser.id });
-    else await supabase.from('post_likes').delete().eq('post_id', postId).eq('user_id', currentUser.id);
+    const { data } = await supabase.from('messages').select('*').or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${userId}),and(sender_id.eq.${userId},receiver_id.eq.${currentUser.id})`).order('created_at', { ascending: true });
+    if (data) setChatMessages(data);
   };
 
-  const handlePostStory = async (imageUrl: string) => {
+  const sendMessage = async () => {
+    if (!messageInput.trim() || !selectedChatUser || !currentUser) return;
+    const text = messageInput;
+    setMessageInput('');
+    const { data, error } = await supabase.from('messages').insert({ sender_id: currentUser.id, receiver_id: selectedChatUser.id, text }).select().single();
+    if (!error && data) setChatMessages(prev => [...prev, data]);
+  };
+
+  const handleStartChat = (user: User) => {
+    setSelectedChatUser(user);
+    setActiveTab('chat');
+    setShowSearchModal(false);
+    fetchChatMessages(user.id);
+  };
+
+  const handleSearch = async (query: string) => {
+    setSearchQuery(query);
+    if (query.length < 2) { setSearchResults([]); return; }
+    setIsSearching(true);
+    const { data } = await supabase.from('profiles').select('*').or(`username.ilike.%${query}%,full_name.ilike.%${query}%,mobile.ilike.%${query}%`).neq('id', currentUser?.id).limit(10);
+    if (data) setSearchResults(data.map(u => ({ id: u.id, username: u.username, fullName: u.full_name, avatar: u.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.username}` })));
+    setIsSearching(false);
+  };
+
+  const handleLike = async (postId: string) => {
     if (!currentUser) return;
+    const postIndex = posts.findIndex(p => p.id === postId);
+    if (postIndex === -1) return;
+    const post = posts[postIndex];
+    const isLiked = post.isLiked;
     try {
-      await supabase.from('stories').insert({ user_id: currentUser.id, image_url: imageUrl });
-      await fetchStories();
+      if (isLiked) {
+        await supabase.from('post_likes').delete().match({ post_id: postId, user_id: currentUser.id });
+        const updatedPosts = [...posts];
+        updatedPosts[postIndex] = { ...post, isLiked: false, likes: Math.max(0, post.likes - 1) };
+        setPosts(updatedPosts);
+      } else {
+        await supabase.from('post_likes').insert({ post_id: postId, user_id: currentUser.id });
+        const updatedPosts = [...posts];
+        updatedPosts[postIndex] = { ...post, isLiked: true, likes: post.likes + 1 };
+        setPosts(updatedPosts);
+      }
     } catch (e) { console.error(e); }
   };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setCurrentUser(null);
+    setActiveTab('home');
     setShowMenu(false);
+  };
+
+  const handlePostStory = async (imageUrl: string) => {
+    if (!currentUser) return;
+    try {
+      const { error } = await supabase.from('stories').insert({ user_id: currentUser.id, image_url: imageUrl });
+      if (!error) fetchStories();
+    } catch (e) { console.error(e); }
   };
 
   const handleTabChange = (tab: string) => {
@@ -328,30 +297,15 @@ const App: React.FC = () => {
     <div className="h-full bg-white dark:bg-slate-950 flex flex-col items-center justify-center p-6 overflow-y-auto">
       <div className="w-full max-w-md space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500 py-12">
         <h1 className="brand-font text-7xl font-bold brand-text-gradient text-center">Lumina</h1>
-        
-        {authError && (
-          <div className="bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 p-5 rounded-3xl text-sm font-bold border border-red-100 dark:border-red-900/30 animate-in shake-in">
-            {authError}
-          </div>
-        )}
-
+        {authError && <div className="bg-red-50 text-red-600 p-5 rounded-3xl text-sm font-bold border border-red-100 animate-in shake-in">{authError}</div>}
         <form onSubmit={handleAuthSubmit} className="space-y-4">
-          {isRegistering && (
-            <input type="text" placeholder="Full Name" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none focus:ring-2 focus:ring-brand-primary/20 dark:text-white" value={authFormData.fullName} onChange={(e) => setAuthFormData({...authFormData, fullName: e.target.value})} />
-          )}
-          <input type="tel" placeholder="Mobile Number" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none focus:ring-2 focus:ring-brand-primary/20 dark:text-white" value={authFormData.mobile} onChange={(e) => setAuthFormData({...authFormData, mobile: e.target.value})} />
-          <input type="password" placeholder="Password" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none focus:ring-2 focus:ring-brand-primary/20 dark:text-white" value={authFormData.password} onChange={(e) => setAuthFormData({...authFormData, password: e.target.value})} />
-          
+          {isRegistering && <input type="text" placeholder="Full Name" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none" value={authFormData.fullName} onChange={(e) => setAuthFormData({...authFormData, fullName: e.target.value})} />}
+          <input type="tel" placeholder="Mobile Number" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none" value={authFormData.mobile} onChange={(e) => setAuthFormData({...authFormData, mobile: e.target.value})} />
+          <input type="password" placeholder="Password" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none" value={authFormData.password} onChange={(e) => setAuthFormData({...authFormData, password: e.target.value})} />
           <button type="submit" disabled={isSubmittingAuth} className="w-full bg-brand-gradient text-white py-5 rounded-3xl font-black shadow-xl active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center space-x-2">
-            {isSubmittingAuth ? (
-              <>
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                <span>Shining...</span>
-              </>
-            ) : (isRegistering ? 'Create Account' : 'Sign In')}
+            {isSubmittingAuth ? 'Shining...' : (isRegistering ? 'Create Account' : 'Sign In')}
           </button>
         </form>
-
         <button onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); }} className="w-full text-center text-sm font-black text-brand-primary uppercase tracking-widest">
           {isRegistering ? 'Already a member? Login' : "New to Lumina? Join the glow"}
         </button>
@@ -411,16 +365,89 @@ const App: React.FC = () => {
                 </div>
               )}
 
+              {activeTab === 'chat' && (
+                <div className="h-full flex flex-col md:flex-row bg-white dark:bg-slate-950 md:rounded-3xl overflow-hidden md:border dark:border-slate-800 md:m-4 shadow-2xl animate-in zoom-in-95 duration-500">
+                  <div className={`w-full md:w-96 border-r dark:border-slate-800 flex flex-col ${selectedChatUser ? 'hidden md:flex' : 'flex'}`}>
+                    <div className="p-6 border-b dark:border-slate-800 space-y-4">
+                      <div className="flex items-center justify-between">
+                         <div className="flex items-center space-x-3">
+                           <button onClick={() => setActiveTab('home')} className="md:hidden p-2 -ml-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full transition-colors active:scale-90">
+                             <ICONS.ChevronLeft className="w-6 h-6 text-gray-600 dark:text-gray-400" />
+                           </button>
+                           <h2 className="font-black text-3xl tracking-tighter">Messages</h2>
+                         </div>
+                         <button onClick={() => setShowSearchModal(true)} className="p-2 bg-brand-primary/10 text-brand-primary rounded-xl hover:bg-brand-primary/20 transition-colors"><ICONS.Search className="w-5 h-5" /></button>
+                      </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto no-scrollbar p-2">
+                      {conversations.length > 0 ? conversations.map(u => (
+                        <div key={u.id} onClick={() => handleStartChat(u)} className={`flex items-center space-x-4 p-4 rounded-[1.5rem] cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-900 ${selectedChatUser?.id === u.id ? 'bg-brand-primary/10' : ''}`}>
+                          <img src={u.avatar} className="w-14 h-14 rounded-full object-cover shadow-sm" />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-sm truncate">{u.fullName}</p>
+                            <p className="text-xs text-gray-500 truncate">@{u.username}</p>
+                          </div>
+                        </div>
+                      )) : (
+                        <div className="p-10 text-center space-y-4">
+                          <p className="text-gray-400 font-bold text-sm">No conversations yet</p>
+                          <button onClick={() => setShowSearchModal(true)} className="w-full py-4 bg-brand-primary text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-transform">Start New Chat</button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className={`flex-1 flex flex-col h-full bg-white dark:bg-slate-950 ${selectedChatUser ? 'fixed inset-0 z-[100] md:relative md:z-auto' : 'hidden md:flex'}`}>
+                    {selectedChatUser ? (
+                      <>
+                        <div className="p-4 border-b dark:border-slate-800 flex items-center justify-between bg-white/80 dark:bg-slate-950/80 backdrop-blur-md sticky top-0 z-10">
+                          <div className="flex items-center space-x-4">
+                            <button onClick={() => setSelectedChatUser(null)} className="md:hidden p-2 bg-gray-100 dark:bg-slate-800 rounded-2xl active:scale-90 transition-transform">
+                              <ICONS.ChevronLeft className="w-5 h-5" />
+                            </button>
+                            <img src={selectedChatUser.avatar} className="w-10 h-10 rounded-full object-cover border-2 border-brand-primary/20" />
+                            <div>
+                              <p className="font-black text-sm">{selectedChatUser.fullName}</p>
+                              <p className="text-[10px] text-brand-primary font-bold uppercase tracking-widest">Active Now</p>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar bg-gray-50/30 dark:bg-slate-950/30">
+                          {chatMessages.map((m, idx) => (
+                            <div key={idx} className={`flex ${m.sender_id === currentUser.id ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2 duration-300`}>
+                              <div className={`max-w-[80%] px-5 py-3 rounded-[1.5rem] text-sm font-medium shadow-sm ${m.sender_id === currentUser.id ? 'bg-brand-gradient text-white rounded-br-none' : 'bg-white dark:bg-slate-800 dark:text-white rounded-bl-none border border-gray-100 dark:border-slate-700'}`}>{m.text}</div>
+                            </div>
+                          ))}
+                          <div ref={chatEndRef} />
+                        </div>
+                        <div className="p-4 border-t dark:border-slate-800 bg-white dark:bg-slate-950">
+                          <div className="flex items-center space-x-3">
+                            <input type="text" placeholder="Shine a message..." className="flex-1 bg-gray-100 dark:bg-slate-900 px-6 py-4 rounded-[1.5rem] outline-none border-none focus:ring-2 focus:ring-brand-primary transition-all dark:text-white" value={messageInput} onChange={(e) => setMessageInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendMessage()} />
+                            <button onClick={sendMessage} className="p-4 bg-brand-gradient text-white rounded-2xl shadow-lg active:scale-90 transition-all"><ICONS.Share className="w-5 h-5" /></button>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex-1 flex flex-col items-center justify-center opacity-20">
+                        <ICONS.Chat className="w-20 h-20 mb-4" />
+                        <p className="font-black text-xl">Select a conversation</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {activeTab === 'friends' && (
                 <div className="p-4 md:p-0 space-y-8 animate-in fade-in duration-500">
                   <h2 className="text-4xl font-black tracking-tighter">Community</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-24">
                     {allUsers.map(user => (
-                      <div key={user.id} className="bg-white dark:bg-slate-900 border dark:border-slate-800 rounded-[2.5rem] p-6 shadow-sm flex flex-col items-center text-center">
-                        <img src={user.avatar} className="w-20 h-20 rounded-full mb-4 object-cover" />
+                      <div key={user.id} className="bg-white dark:bg-slate-900 border dark:border-slate-800 rounded-[2.5rem] p-6 shadow-sm flex flex-col items-center text-center hover:shadow-xl transition-shadow">
+                        <img src={user.avatar} className="w-20 h-20 rounded-full mb-4 object-cover border-4 border-brand-primary/10" />
                         <h3 className="font-black text-lg">{user.fullName}</h3>
                         <p className="text-brand-primary font-bold text-xs mb-4">@{user.username}</p>
-                        <button onClick={() => {}} className="w-full py-3 bg-brand-primary text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg">Follow</button>
+                        <div className="flex w-full space-x-2">
+                           <button onClick={() => handleStartChat(user)} className="flex-1 py-3 bg-brand-primary text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg active:scale-95 transition-transform">Message</button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -437,11 +464,11 @@ const App: React.FC = () => {
                           <h2 className="text-4xl font-black tracking-tighter mb-1">{currentUser.fullName}</h2>
                           <p className="text-brand-primary font-black uppercase tracking-widest text-sm">@{currentUser.username}</p>
                        </div>
-                       <button onClick={() => setShowEditProfileModal(true)} className="mt-6 md:mt-0 px-8 py-3.5 bg-brand-gradient text-white rounded-2xl font-black text-sm shadow-xl">Edit Identity</button>
+                       <button onClick={() => setShowEditProfileModal(true)} className="mt-6 md:mt-0 px-8 py-3.5 bg-brand-gradient text-white rounded-2xl font-black text-sm shadow-xl active:scale-95 transition-transform">Edit Identity</button>
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                       {posts.filter(p => p.user.id === currentUser.id).map(p => (
-                        <div key={p.id} onClick={() => setSelectedPostDetail(p)} className="aspect-square rounded-2xl overflow-hidden cursor-pointer border dark:border-slate-800"><img src={p.imageUrl} className="w-full h-full object-cover" /></div>
+                        <div key={p.id} onClick={() => setSelectedPostDetail(p)} className="aspect-square rounded-2xl overflow-hidden cursor-pointer border dark:border-slate-800 hover:scale-[1.02] transition-transform"><img src={p.imageUrl} className="w-full h-full object-cover" /></div>
                       ))}
                     </div>
                   </div>
@@ -450,9 +477,10 @@ const App: React.FC = () => {
             </div>
           </main>
           
-          <Navbar onTabChange={handleTabChange} activeTab={activeTab} hiddenOnMobile={activeTab === 'chat'} />
+          <Navbar onTabChange={handleTabChange} activeTab={activeTab} hiddenOnMobile={activeTab === 'chat'} currentUser={currentUser} />
           
           {showMenu && <Sidebar isOpen={showMenu} onClose={() => setShowMenu(false)} user={currentUser} onLogout={handleLogout} onThemeToggle={() => setTheme(theme === 'light' ? 'dark' : 'light')} onSavedClick={() => { setActiveTab('saved'); setShowMenu(false); }} currentTheme={theme} />}
+          {showSearchModal && <SearchModal isOpen={showSearchModal} onClose={() => setShowSearchModal(false)} searchQuery={searchQuery} onSearchChange={handleSearch} results={searchResults} isSearching={isSearching} onSelectUser={handleStartChat} />}
           {showCreateModal && <CreatePostModal onClose={() => setShowCreateModal(false)} onPost={async (img, cap) => { await supabase.from('posts').insert({ user_id: currentUser.id, image_url: img, caption: cap }); fetchPosts(); setActiveTab('home'); }} />}
           {showCreateStoryModal && <CreateStoryModal onClose={() => setShowCreateStoryModal(false)} onPost={handlePostStory} />}
           {showEditProfileModal && currentUser && <EditProfileModal user={currentUser} onClose={() => setShowEditProfileModal(false)} onUpdate={async (d) => { await supabase.from('profiles').update({ full_name: d.fullName, bio: d.bio, avatar_url: d.avatar, cover_photo_url: d.coverPhoto }).eq('id', currentUser.id); fetchProfile(currentUser.id); }} />}

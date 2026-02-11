@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { ICONS } from '../constants';
 import { User } from '../types';
@@ -6,18 +7,10 @@ interface NavbarProps {
   onTabChange: (tab: string) => void;
   activeTab: string;
   hiddenOnMobile?: boolean;
+  currentUser: User | null;
 }
 
-const Navbar: React.FC<NavbarProps> = ({ onTabChange, activeTab, hiddenOnMobile }) => {
-  const currentUser: User | null = (() => {
-    try {
-      const saved = localStorage.getItem('lumina_user');
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  })();
-
+const Navbar: React.FC<NavbarProps> = ({ onTabChange, activeTab, hiddenOnMobile, currentUser }) => {
   const navItems = [
     { id: 'home', icon: ICONS.Home },
     { id: 'friends', icon: ICONS.Friends },
@@ -59,7 +52,7 @@ const Navbar: React.FC<NavbarProps> = ({ onTabChange, activeTab, hiddenOnMobile 
               {item.id === 'profile' ? (
                 <div className={`p-0.5 rounded-full border-2 transition-all duration-300 ${isActive ? 'border-brand-primary dark:border-brand-secondary scale-110 shadow-sm' : 'border-transparent'}`}>
                   <img 
-                    src={currentUser?.avatar || 'https://picsum.photos/seed/default/100/100'} 
+                    src={currentUser?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${currentUser?.username || 'default'}`} 
                     alt="Profile" 
                     className="w-7 h-7 rounded-full object-cover bg-gray-100 dark:bg-slate-800 shadow-sm ring-1 ring-gray-100 dark:ring-slate-700" 
                     loading="lazy"
