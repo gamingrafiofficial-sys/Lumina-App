@@ -18,6 +18,7 @@ import { supabase } from './lib/supabase';
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
+  const [isTransitioning, setIsTransitioning] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('lumina_theme');
@@ -62,8 +63,8 @@ const App: React.FC = () => {
   const STORY_TTL = 24 * 60 * 60 * 1000;
 
   useEffect(() => {
-    // Strict 1-second splash screen timer
-    const timer = setTimeout(() => {
+    // 1. Strict 1-second splash screen
+    const splashTimer = setTimeout(() => {
       setSessionLoading(false);
     }, 1000);
 
@@ -89,12 +90,12 @@ const App: React.FC = () => {
     });
 
     return () => {
-      clearTimeout(timer);
+      clearTimeout(splashTimer);
       subscription.unsubscribe();
     };
   }, []);
 
-  const fetchProfile = async (userId: string) => {
+  const fetchProfile = async (userId: string): Promise<boolean> => {
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -103,18 +104,15 @@ const App: React.FC = () => {
         .maybeSingle();
 
       if (error || !data) {
-        if (!data) {
-          const fallbackUser: User = {
-            id: userId,
-            username: `user_${userId.substring(0, 5)}`,
-            fullName: 'Lumina User',
-            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`,
-            bio: "Welcome to Lumina!"
-          };
-          setCurrentUser(fallbackUser);
-          return;
-        }
-        return;
+        const fallbackUser: User = {
+          id: userId,
+          username: `user_${userId.substring(0, 5)}`,
+          fullName: authFormData.fullName || 'Lumina User',
+          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`,
+          bio: "Welcome to Lumina!"
+        };
+        setCurrentUser(fallbackUser);
+        return true;
       }
       
       const user: User = {
@@ -130,8 +128,9 @@ const App: React.FC = () => {
         website: data.website
       };
       setCurrentUser(user);
+      return true;
     } catch (err) {
-      console.error("Profile fetch error:", err);
+      return false;
     }
   };
 
@@ -170,11 +169,13 @@ const App: React.FC = () => {
             avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`
           });
           await fetchProfile(data.user.id);
-          // Transition within 1 second after registration
+          // Transition animation exactly 1 second
+          setIsTransitioning(true);
           setTimeout(() => {
             setActiveTab('home');
             setIsSubmittingAuth(false);
-          }, 800);
+            setIsTransitioning(false);
+          }, 1000);
         }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -186,13 +187,14 @@ const App: React.FC = () => {
           setAuthError('Invalid credentials');
           setIsSubmittingAuth(false);
         } else if (data.user) {
-          // Immediately fetch profile
           await fetchProfile(data.user.id);
-          // High-speed transition to home
+          // 2. Transition animation exactly 1 second
+          setIsTransitioning(true);
           setTimeout(() => {
             setActiveTab('home');
             setIsSubmittingAuth(false);
-          }, 800);
+            setIsTransitioning(false);
+          }, 1000);
         }
       }
     } catch (err) {
@@ -201,7 +203,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Helper effect to load initial data once logged in
   useEffect(() => {
     if (currentUser) {
       fetchPosts();
@@ -363,9 +364,12 @@ const App: React.FC = () => {
     fetchChatMessages(user.id);
   };
 
-  if (sessionLoading) return (
+  if (sessionLoading || isTransitioning) return (
     <div className="fixed inset-0 bg-white dark:bg-slate-950 flex flex-col items-center justify-center z-[200]">
-      <h1 className="brand-font text-7xl font-bold brand-text-gradient animate-pulse-fast">Lumina</h1>
+      <div className="animate-in fade-in zoom-in-95 duration-500 flex flex-col items-center">
+        <h1 className="brand-font text-7xl font-bold brand-text-gradient animate-pulse-fast">Lumina</h1>
+        {isTransitioning && <p className="mt-4 text-[10px] font-black uppercase tracking-widest text-brand-primary animate-pulse">Entering Home...</p>}
+      </div>
     </div>
   );
 
@@ -407,7 +411,7 @@ const App: React.FC = () => {
 
   return (
     <Router>
-      <div className="h-full flex flex-col md:flex-row bg-white dark:bg-slate-950 overflow-hidden text-gray-900 dark:text-gray-100">
+      <div className="h-full flex flex-col md:flex-row bg-white dark:bg-slate-950 overflow-hidden text-gray-900 dark:text-gray-100 animate-in fade-in duration-1000">
         <aside className="hidden md:flex flex-col w-72 bg-white dark:bg-slate-900 border-r dark:border-slate-800 p-6 z-[60] h-screen sticky top-0">
           <h1 className="brand-font text-4xl font-bold brand-text-gradient mb-12 cursor-pointer" onClick={() => handleTabChange('home')}>Lumina</h1>
           <nav className="flex-1 space-y-2">
