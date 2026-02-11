@@ -48,7 +48,6 @@ const App: React.FC = () => {
   const [selectedChatUser, setSelectedChatUser] = useState<User | null>(null);
   const [chatMessages, setChatMessages] = useState<{id: string, sender_id: string, text: string, created_at: string}[]>([]);
   const [messageInput, setMessageInput] = useState('');
-  const [chatSearchQuery, setChatSearchQuery] = useState('');
   const [conversations, setConversations] = useState<User[]>([]);
 
   const [allUsers, setAllUsers] = useState<User[]>([]);
@@ -59,53 +58,62 @@ const App: React.FC = () => {
 
   const STORY_TTL = 24 * 60 * 60 * 1000;
 
-  // Initial Session & Splash Timer
+  // Initialize App
   useEffect(() => {
-    const splashTimer = setTimeout(() => {
-      setSessionLoading(false);
-    }, 1000);
+    const init = async () => {
+      // Splash screen minimum 1s
+      const timer = setTimeout(() => setSessionLoading(false), 1000);
 
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        await fetchProfile(session.user.id);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          await fetchProfile(session.user.id);
+        }
+      } catch (e) {
+        console.error("Initial session check failed", e);
       }
+      
+      return () => clearTimeout(timer);
     };
 
-    checkSession();
+    init();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session) {
+      if (session?.user) {
         await fetchProfile(session.user.id);
       } else {
         setCurrentUser(null);
       }
     });
 
-    return () => {
-      clearTimeout(splashTimer);
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
   const fetchProfile = async (userId: string) => {
     try {
-      const { data, error } = await supabase
+      // Timeout the database call after 3 seconds to prevent UI hang
+      const profilePromise = supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .maybeSingle();
 
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), 3000)
+      );
+
+      const result: any = await Promise.race([profilePromise, timeoutPromise]);
+      const { data, error } = result;
+
       if (error || !data) {
-        // Fallback: Create or use temporary profile to prevent hanging
-        const fallbackUser: User = {
+        // Safe Fallback: User exists in Auth but not in Profiles table yet
+        setCurrentUser({
           id: userId,
           username: `user_${userId.substring(0, 5)}`,
-          fullName: authFormData.fullName || 'Lumina User',
+          fullName: authFormData.fullName || 'Lumina Explorer',
           avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`,
-          bio: "Shining on Lumina!"
-        };
-        setCurrentUser(fallbackUser);
+          bio: "Shining on Lumina ✨"
+        });
         return;
       }
       
@@ -122,7 +130,13 @@ const App: React.FC = () => {
         website: data.website
       });
     } catch (err) {
-      console.error("Profile sync error:", err);
+      // Ultimate Fallback
+      setCurrentUser({
+        id: userId,
+        username: `user_${userId.substring(0, 5)}`,
+        fullName: 'Lumina User',
+        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`,
+      });
     }
   };
 
@@ -132,31 +146,59 @@ const App: React.FC = () => {
     setIsSubmittingAuth(true);
 
     const sanitizedMobile = authFormData.mobile.trim().replace(/[^0-9]/g, '');
+    if (sanitizedMobile.length < 10) {
+      setAuthError("Please enter a valid mobile number.");
+      setIsSubmittingAuth(false);
+      return;
+    }
+    
     const proxyEmail = `${sanitizedMobile}@lumina.app`;
 
     try {
       if (isRegistering) {
-        const { data, error } = await supabase.auth.signUp({ email: proxyEmail, password: authFormData.password });
+        const { data, error } = await supabase.auth.signUp({ 
+          email: proxyEmail, 
+          password: authFormData.password,
+          options: { data: { full_name: authFormData.fullName } }
+        });
+        
         if (error) throw error;
+        
         if (data.user) {
           const username = authFormData.fullName.toLowerCase().replace(/\s+/g, '_') + Math.floor(Math.random() * 100);
+          // Attempt to create profile, but don't hang if it fails
           await supabase.from('profiles').insert({
-            id: data.user.id, username, full_name: authFormData.fullName, mobile: sanitizedMobile,
+            id: data.user.id, 
+            username, 
+            full_name: authFormData.fullName, 
+            mobile: sanitizedMobile,
             avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`
-          });
+          }).select();
+          
           await fetchProfile(data.user.id);
           triggerTransition();
         }
       } else {
-        const { data, error } = await supabase.auth.signInWithPassword({ email: proxyEmail, password: authFormData.password });
-        if (error) throw new Error('Invalid credentials. Check number and password.');
+        const { data, error } = await supabase.auth.signInWithPassword({ 
+          email: proxyEmail, 
+          password: authFormData.password 
+        });
+        
+        if (error) {
+          if (error.message.includes('confirm')) {
+            throw new Error("Login failed. Check your credentials or contact support.");
+          }
+          throw error;
+        }
+
         if (data.user) {
           await fetchProfile(data.user.id);
           triggerTransition();
         }
       }
     } catch (err: any) {
-      setAuthError(err.message || "Authentication failed.");
+      console.error("Auth Error:", err);
+      setAuthError(err.message || "Connection failed. Please try again.");
       setIsSubmittingAuth(false);
     }
   };
@@ -170,7 +212,7 @@ const App: React.FC = () => {
     }, 1000);
   };
 
-  // Database Sync Effects
+  // Sync Database
   useEffect(() => {
     if (currentUser) {
       fetchPosts();
@@ -181,24 +223,33 @@ const App: React.FC = () => {
   }, [currentUser]);
 
   const fetchPosts = async () => {
-    const { data, error } = await supabase.from('posts').select('*, profiles(*)').order('created_at', { ascending: false });
-    if (!error && data) {
-      const savedIds = JSON.parse(localStorage.getItem(`lumina_saved_${currentUser?.id}`) || '[]');
-      const { data: userLikes } = await supabase.from('post_likes').select('post_id').eq('user_id', currentUser?.id);
-      const likedPostIds = new Set(userLikes?.map(l => l.post_id) || []);
-      
-      const mappedPosts: Post[] = data.map(p => ({
-        id: p.id, 
-        user: { id: p.profiles.id, username: p.profiles.username, fullName: p.profiles.full_name, avatar: p.profiles.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.profiles.username}` },
-        imageUrl: p.image_url, 
-        caption: p.caption, 
-        likes: p.likes_count || 0, 
-        isLiked: likedPostIds.has(p.id), 
-        isSaved: savedIds.includes(p.id), 
-        timestamp: new Date(p.created_at).toLocaleDateString(),
-        comments: [] // Loaded on demand for performance
-      }));
-      setPosts(mappedPosts);
+    try {
+      const { data, error } = await supabase.from('posts').select('*, profiles(*)').order('created_at', { ascending: false });
+      if (error) throw error;
+      if (data) {
+        const savedIds = JSON.parse(localStorage.getItem(`lumina_saved_${currentUser?.id}`) || '[]');
+        const { data: userLikes } = await supabase.from('post_likes').select('post_id').eq('user_id', currentUser?.id);
+        const likedPostIds = new Set(userLikes?.map(l => l.post_id) || []);
+        
+        setPosts(data.map(p => ({
+          id: p.id, 
+          user: { 
+            id: p.profiles?.id || '', 
+            username: p.profiles?.username || 'user', 
+            fullName: p.profiles?.full_name || 'Lumina User', 
+            avatar: p.profiles?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.profiles?.username || p.id}` 
+          },
+          imageUrl: p.image_url, 
+          caption: p.caption, 
+          likes: p.likes_count || 0, 
+          isLiked: likedPostIds.has(p.id), 
+          isSaved: savedIds.includes(p.id), 
+          timestamp: new Date(p.created_at).toLocaleDateString(),
+          comments: []
+        })));
+      }
+    } catch (e) {
+      console.error("Posts fetch failed", e);
     }
   };
 
@@ -208,17 +259,15 @@ const App: React.FC = () => {
     if (data) {
       setStories(data.map(s => ({
         id: s.id, imageUrl: s.image_url, viewed: false, createdAt: new Date(s.created_at).getTime(),
-        user: { id: s.profiles.id, username: s.profiles.username, avatar: s.profiles.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${s.profiles.username}`, fullName: s.profiles.full_name }
+        user: { id: s.profiles?.id, username: s.profiles?.username, avatar: s.profiles?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${s.profiles?.username}`, fullName: s.profiles?.full_name }
       })));
     }
   };
 
   const fetchCommunityUsers = async () => {
     if (!currentUser) return;
-    const { data } = await supabase.from('profiles').select('*').neq('id', currentUser.id).limit(15);
+    const { data } = await supabase.from('profiles').select('*').neq('id', currentUser.id).limit(10);
     if (data) setAllUsers(data.map(u => ({ id: u.id, username: u.username, fullName: u.full_name, avatar: u.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.username}` })));
-    const localFollowing = JSON.parse(localStorage.getItem(`lumina_following_${currentUser.id}`) || '[]');
-    setFollowingIds(new Set(localFollowing));
   };
 
   const fetchConversations = async () => {
@@ -243,11 +292,18 @@ const App: React.FC = () => {
     else await supabase.from('post_likes').delete().eq('post_id', postId).eq('user_id', currentUser.id);
   };
 
+  const handlePostStory = async (imageUrl: string) => {
+    if (!currentUser) return;
+    try {
+      await supabase.from('stories').insert({ user_id: currentUser.id, image_url: imageUrl });
+      await fetchStories();
+    } catch (e) { console.error(e); }
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setCurrentUser(null);
     setShowMenu(false);
-    setActiveTab('home');
   };
 
   const handleTabChange = (tab: string) => {
@@ -255,46 +311,48 @@ const App: React.FC = () => {
     else { setActiveTab(tab); if (tab !== 'chat') setSelectedChatUser(null); }
   };
 
-  // Fix for: Cannot find name 'handlePostStory'
-  const handlePostStory = async (imageUrl: string) => {
-    if (!currentUser) return;
-    try {
-      const { error } = await supabase.from('stories').insert({
-        user_id: currentUser.id,
-        image_url: imageUrl
-      });
-      if (error) throw error;
-      await fetchStories();
-    } catch (err) {
-      console.error("Error posting story:", err);
-    }
-  };
-
   if (sessionLoading || isTransitioning) return (
     <div className="fixed inset-0 bg-white dark:bg-slate-950 flex flex-col items-center justify-center z-[500]">
       <div className="flex flex-col items-center animate-in zoom-in-95 duration-500">
         <h1 className="brand-font text-8xl font-bold brand-text-gradient animate-pulse-fast">Lumina</h1>
-        {isTransitioning && <p className="mt-4 text-[10px] font-black uppercase tracking-[0.2em] text-brand-primary">Entering Home...</p>}
+        <div className="mt-8 flex items-center space-x-2">
+          <div className="w-2 h-2 bg-brand-primary rounded-full animate-bounce"></div>
+          <div className="w-2 h-2 bg-brand-primary rounded-full animate-bounce [animation-delay:0.2s]"></div>
+          <div className="w-2 h-2 bg-brand-primary rounded-full animate-bounce [animation-delay:0.4s]"></div>
+        </div>
       </div>
     </div>
   );
 
   if (!currentUser) return (
-    <div className="h-full bg-white dark:bg-slate-950 flex flex-col items-center justify-center p-6">
-      <div className="w-full max-w-md space-y-12 animate-in fade-in slide-in-from-bottom-2 duration-500">
+    <div className="h-full bg-white dark:bg-slate-950 flex flex-col items-center justify-center p-6 overflow-y-auto">
+      <div className="w-full max-w-md space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500 py-12">
         <h1 className="brand-font text-7xl font-bold brand-text-gradient text-center">Lumina</h1>
-        {authError && <div className="bg-red-50 text-red-600 p-5 rounded-3xl text-xs font-black border border-red-100 animate-in shake-in">{authError}</div>}
+        
+        {authError && (
+          <div className="bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 p-5 rounded-3xl text-sm font-bold border border-red-100 dark:border-red-900/30 animate-in shake-in">
+            {authError}
+          </div>
+        )}
+
         <form onSubmit={handleAuthSubmit} className="space-y-4">
           {isRegistering && (
-            <input type="text" placeholder="Full Name" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none" value={authFormData.fullName} onChange={(e) => setAuthFormData({...authFormData, fullName: e.target.value})} />
+            <input type="text" placeholder="Full Name" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none focus:ring-2 focus:ring-brand-primary/20 dark:text-white" value={authFormData.fullName} onChange={(e) => setAuthFormData({...authFormData, fullName: e.target.value})} />
           )}
-          <input type="tel" placeholder="Mobile Number" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none" value={authFormData.mobile} onChange={(e) => setAuthFormData({...authFormData, mobile: e.target.value})} />
-          <input type="password" placeholder="Password" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none" value={authFormData.password} onChange={(e) => setAuthFormData({...authFormData, password: e.target.value})} />
-          <button type="submit" disabled={isSubmittingAuth} className="w-full bg-brand-gradient text-white py-5 rounded-3xl font-black shadow-xl active:scale-[0.98] transition-all disabled:opacity-50">
-            {isSubmittingAuth ? 'Shining...' : (isRegistering ? 'Create Account' : 'Sign In')}
+          <input type="tel" placeholder="Mobile Number" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none focus:ring-2 focus:ring-brand-primary/20 dark:text-white" value={authFormData.mobile} onChange={(e) => setAuthFormData({...authFormData, mobile: e.target.value})} />
+          <input type="password" placeholder="Password" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-3xl outline-none focus:ring-2 focus:ring-brand-primary/20 dark:text-white" value={authFormData.password} onChange={(e) => setAuthFormData({...authFormData, password: e.target.value})} />
+          
+          <button type="submit" disabled={isSubmittingAuth} className="w-full bg-brand-gradient text-white py-5 rounded-3xl font-black shadow-xl active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center space-x-2">
+            {isSubmittingAuth ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                <span>Shining...</span>
+              </>
+            ) : (isRegistering ? 'Create Account' : 'Sign In')}
           </button>
         </form>
-        <button onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); }} className="w-full text-center text-sm font-black text-brand-primary">
+
+        <button onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); }} className="w-full text-center text-sm font-black text-brand-primary uppercase tracking-widest">
           {isRegistering ? 'Already a member? Login' : "New to Lumina? Join the glow"}
         </button>
       </div>
@@ -304,7 +362,6 @@ const App: React.FC = () => {
   return (
     <Router>
       <div className="h-full flex flex-col md:flex-row bg-white dark:bg-slate-950 overflow-hidden text-gray-900 dark:text-gray-100">
-        {/* Sidebar Desktop */}
         <aside className="hidden md:flex flex-col w-72 bg-white dark:bg-slate-900 border-r dark:border-slate-800 p-6 h-screen sticky top-0">
           <h1 className="brand-font text-4xl font-bold brand-text-gradient mb-12 cursor-pointer" onClick={() => handleTabChange('home')}>Lumina</h1>
           <nav className="flex-1 space-y-2">
@@ -316,8 +373,7 @@ const App: React.FC = () => {
         </aside>
 
         <div className="flex-1 flex flex-col min-w-0 h-full relative">
-          {/* Header Mobile */}
-          <header className={`${(activeTab === 'chat' || activeTab === 'saved') ? 'hidden md:flex' : 'flex'} flex-none bg-white dark:bg-slate-900 border-b dark:border-slate-800 px-4 pt-4 pb-3 items-center justify-between sticky top-0 z-50 md:hidden`}>
+          <header className={`${(activeTab === 'chat') ? 'hidden md:flex' : 'flex'} flex-none bg-white dark:bg-slate-900 border-b dark:border-slate-800 px-4 pt-4 pb-3 items-center justify-between sticky top-0 z-50 md:hidden`}>
             <button onClick={() => setShowMenu(true)} className="p-2"><ICONS.Menu className="w-6 h-6" /></button>
             <h1 className="brand-font text-3xl font-bold brand-text-gradient">Lumina</h1>
             <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} className="p-2 text-brand-primary"><ICONS.Magic className="w-6 h-6" /></button>
@@ -327,7 +383,6 @@ const App: React.FC = () => {
             <div className={`w-full mx-auto p-0 ${activeTab === 'chat' ? 'h-full' : 'max-w-[1200px] md:p-8'}`}>
               {activeTab === 'home' && (
                 <div className="space-y-8 animate-in fade-in duration-700">
-                  {/* Stories Area */}
                   <div className="flex space-x-4 overflow-x-auto no-scrollbar py-6 px-4">
                     <div onClick={() => setShowCreateStoryModal(true)} className="flex flex-col items-center space-y-2 cursor-pointer min-w-[85px]">
                       <div className="relative w-[75px] h-[75px]">
@@ -343,9 +398,15 @@ const App: React.FC = () => {
                       </div>
                     ))}
                   </div>
-                  {/* Posts Feed */}
                   <div className="space-y-6 flex flex-col items-center pb-24">
-                    {posts.map(post => <PostCard key={post.id} post={post} currentUser={currentUser} onLike={handleLike} onSave={() => {}} onComment={() => setViewingCommentsPost(post)} onUserClick={() => {}} onDelete={fetchPosts} onEdit={() => {}} onOpenComments={setViewingCommentsPost} onPhotoClick={setSelectedPostDetail} />)}
+                    {posts.length > 0 ? (
+                      posts.map(post => <PostCard key={post.id} post={post} currentUser={currentUser} onLike={handleLike} onSave={() => {}} onComment={() => setViewingCommentsPost(post)} onUserClick={() => {}} onDelete={fetchPosts} onEdit={() => {}} onOpenComments={setViewingCommentsPost} onPhotoClick={setSelectedPostDetail} />)
+                    ) : (
+                      <div className="py-20 text-center opacity-40 flex flex-col items-center space-y-4">
+                        <ICONS.Create className="w-16 h-16" />
+                        <p className="font-bold">No posts to show yet. Be the first!</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -359,9 +420,7 @@ const App: React.FC = () => {
                         <img src={user.avatar} className="w-20 h-20 rounded-full mb-4 object-cover" />
                         <h3 className="font-black text-lg">{user.fullName}</h3>
                         <p className="text-brand-primary font-bold text-xs mb-4">@{user.username}</p>
-                        <div className="flex w-full space-x-2">
-                           <button onClick={() => {}} className="flex-1 py-3 bg-brand-primary text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg">Follow</button>
-                        </div>
+                        <button onClick={() => {}} className="w-full py-3 bg-brand-primary text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg">Follow</button>
                       </div>
                     ))}
                   </div>
@@ -370,7 +429,7 @@ const App: React.FC = () => {
 
               {activeTab === 'profile' && currentUser && (
                 <div className="bg-white dark:bg-slate-900 md:rounded-[3rem] overflow-hidden shadow-2xl animate-in fade-in duration-500">
-                  <div className="h-48 md:h-64 relative"><img src={currentUser.coverPhoto} className="w-full h-full object-cover" /></div>
+                  <div className="h-48 md:h-64 relative bg-brand-primary/10"><img src={currentUser.coverPhoto} className="w-full h-full object-cover" /></div>
                   <div className="px-6 md:px-12 pb-24 -mt-16 relative z-10">
                     <img src={currentUser.avatar} className="w-32 h-32 md:w-40 md:h-40 rounded-[2.5rem] border-8 border-white dark:border-slate-900 shadow-2xl object-cover bg-white mb-6" />
                     <div className="flex flex-col md:flex-row md:items-end md:justify-between mb-8">
@@ -391,7 +450,7 @@ const App: React.FC = () => {
             </div>
           </main>
           
-          <Navbar onTabChange={handleTabChange} activeTab={activeTab} hiddenOnMobile={activeTab === 'chat' || activeTab === 'saved'} />
+          <Navbar onTabChange={handleTabChange} activeTab={activeTab} hiddenOnMobile={activeTab === 'chat'} />
           
           {showMenu && <Sidebar isOpen={showMenu} onClose={() => setShowMenu(false)} user={currentUser} onLogout={handleLogout} onThemeToggle={() => setTheme(theme === 'light' ? 'dark' : 'light')} onSavedClick={() => { setActiveTab('saved'); setShowMenu(false); }} currentTheme={theme} />}
           {showCreateModal && <CreatePostModal onClose={() => setShowCreateModal(false)} onPost={async (img, cap) => { await supabase.from('posts').insert({ user_id: currentUser.id, image_url: img, caption: cap }); fetchPosts(); setActiveTab('home'); }} />}
