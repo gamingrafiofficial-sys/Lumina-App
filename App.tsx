@@ -248,6 +248,7 @@ const App: React.FC = () => {
     }
     localStorage.setItem(storageKey, JSON.stringify(savedIds));
     setPosts(prev => prev.map(p => p.id === postId ? { ...p, isSaved: !isAlreadySaved } : p));
+    setToast({ message: isAlreadySaved ? 'Removed from saved' : 'Added to saved', type: 'success' });
   };
 
   const fetchCommunityUsers = async () => {
@@ -433,7 +434,7 @@ const App: React.FC = () => {
         <div className="flex-1 flex flex-col min-w-0 h-full relative">
           {toast && <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[700] px-6 py-3 rounded-2xl shadow-2xl font-bold animate-in fade-in slide-in-from-top ${toast.type === 'success' ? 'bg-brand-primary text-white' : 'bg-brand-secondary text-white'}`}>{toast.message}</div>}
 
-          <header className={`${activeTab === 'chat' ? 'hidden md:flex' : 'flex'} flex-none bg-white dark:bg-slate-900 border-b dark:border-slate-800 px-4 pt-4 pb-3 items-center justify-between sticky top-0 z-50 md:hidden`}>
+          <header className={`${(activeTab === 'chat' || activeTab === 'saved') ? 'hidden md:flex' : 'flex'} flex-none bg-white dark:bg-slate-900 border-b dark:border-slate-800 px-4 pt-4 pb-3 items-center justify-between sticky top-0 z-50 md:hidden`}>
             <button onClick={() => setShowMenu(true)} className="p-2"><ICONS.Menu className="w-6 h-6" /></button>
             <h1 className="brand-font text-3xl font-bold brand-text-gradient">Lumina</h1>
             <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} className="p-2 text-brand-primary"><ICONS.Magic className="w-6 h-6" /></button>
@@ -460,6 +461,34 @@ const App: React.FC = () => {
                   </div>
                   <div className="space-y-6 flex flex-col items-center pb-24">
                     {posts.map(post => <PostCard key={post.id} post={post} currentUser={currentUser} onLike={handleLike} onSave={handleSavePost} onComment={() => setViewingCommentsPost(post)} onUserClick={(u) => { /* Handle profile click if needed */ }} onDelete={async () => fetchPosts()} onEdit={() => {}} onOpenComments={setViewingCommentsPost} onPhotoClick={setSelectedPostDetail} />)}
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'saved' && (
+                <div className="p-4 md:p-0 space-y-8">
+                  <div className="flex items-center space-x-4">
+                    <button onClick={() => handleTabChange('home')} className="md:hidden p-2 bg-gray-100 dark:bg-slate-800 rounded-xl"><ICONS.ChevronLeft className="w-6 h-6" /></button>
+                    <h2 className="text-4xl font-black tracking-tighter">Saved Moments</h2>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 pb-24">
+                    {posts.filter(p => p.isSaved).map(p => (
+                      <div key={p.id} onClick={() => setSelectedPostDetail(p)} className="aspect-square rounded-2xl overflow-hidden cursor-pointer relative group border dark:border-slate-800">
+                        <img src={p.imageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" alt="" />
+                        <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <ICONS.Bookmark className="text-white w-8 h-8 fill-current" />
+                        </div>
+                      </div>
+                    ))}
+                    {posts.filter(p => p.isSaved).length === 0 && (
+                      <div className="col-span-full py-32 flex flex-col items-center justify-center opacity-30 text-center">
+                         <div className="w-24 h-24 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-6">
+                           <ICONS.Bookmark className="w-12 h-12" />
+                         </div>
+                         <h3 className="text-xl font-black uppercase tracking-widest">No Saved Light</h3>
+                         <p className="text-sm mt-2 max-w-xs mx-auto">Moments you bookmark will appear here for you to revisit anytime.</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -637,7 +666,7 @@ const App: React.FC = () => {
             </div>
           </main>
           
-          <Navbar onTabChange={handleTabChange} activeTab={activeTab} hiddenOnMobile={activeTab === 'chat'} />
+          <Navbar onTabChange={handleTabChange} activeTab={activeTab} hiddenOnMobile={activeTab === 'chat' || activeTab === 'saved'} />
           
           {showMenu && <Sidebar isOpen={showMenu} onClose={() => setShowMenu(false)} user={currentUser} onLogout={handleLogout} onThemeToggle={() => setTheme(theme === 'light' ? 'dark' : 'light')} onSavedClick={() => { setActiveTab('saved'); setShowMenu(false); }} currentTheme={theme} />}
           {showCreateModal && <CreatePostModal onClose={() => setShowCreateModal(false)} onPost={async (img, cap) => { await supabase.from('posts').insert({ user_id: currentUser.id, image_url: img, caption: cap }); fetchPosts(); setActiveTab('home'); }} />}
