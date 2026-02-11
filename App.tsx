@@ -61,7 +61,80 @@ const App: React.FC = () => {
 
   const STORY_TTL = 24 * 60 * 60 * 1000;
 
-  // Real-time Search Logic: name, username, or mobile
+  useEffect(() => {
+    // Safety timeout: If authentication check takes more than 5 seconds, force show login page
+    const safetyTimer = setTimeout(() => {
+      if (sessionLoading) {
+        console.warn("Session check timed out. Forcing UI to load.");
+        setSessionLoading(false);
+      }
+    }, 5000);
+
+    const initializeAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          await fetchProfile(session.user.id);
+        } else {
+          setSessionLoading(false);
+        }
+      } catch (err) {
+        console.error("Auth init error:", err);
+        setSessionLoading(false);
+      }
+    };
+
+    initializeAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session) {
+        await fetchProfile(session.user.id);
+      } else {
+        setCurrentUser(null);
+        setSessionLoading(false);
+      }
+    });
+
+    return () => {
+      clearTimeout(safetyTimer);
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const fetchProfile = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle(); // Use maybeSingle to prevent fatal error if profile missing
+
+      if (error || !data) {
+        console.warn("Profile not found or error:", error);
+        setSessionLoading(false);
+        return;
+      }
+      
+      const user: User = {
+        id: data.id, 
+        username: data.username, 
+        fullName: data.full_name,
+        mobile: data.mobile,
+        avatar: data.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.username}`,
+        coverPhoto: data.cover_photo_url || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop',
+        bio: data.bio || "Sharing light on Lumina ✨",
+        work: data.work, 
+        location: data.location, 
+        website: data.website
+      };
+      setCurrentUser(user);
+    } catch (err) {
+      console.error("Fetch profile catch error:", err);
+    } finally {
+      setSessionLoading(false);
+    }
+  };
+
   useEffect(() => {
     const searchUsers = async () => {
       const query = chatSearchQuery.trim();
@@ -137,60 +210,6 @@ const App: React.FC = () => {
       return () => clearTimeout(timer);
     }
   }, [toast]);
-
-  useEffect(() => {
-    const checkSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          await fetchProfile(session.user.id);
-        } else {
-          setSessionLoading(false);
-        }
-      } catch (err) {
-        setSessionLoading(false);
-      }
-    };
-    checkSession();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session) {
-        await fetchProfile(session.user.id);
-      } else {
-        setCurrentUser(null);
-        setSessionLoading(false);
-      }
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const fetchProfile = async (userId: string) => {
-    try {
-      const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
-      if (error || !data) {
-        setSessionLoading(false);
-        return;
-      }
-      const user: User = {
-        id: data.id, 
-        username: data.username, 
-        fullName: data.full_name,
-        mobile: data.mobile,
-        avatar: data.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.username}`,
-        coverPhoto: data.cover_photo_url || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop',
-        bio: data.bio || "Sharing light on Lumina ✨",
-        work: data.work, 
-        location: data.location, 
-        website: data.website
-      };
-      setCurrentUser(user);
-      localStorage.setItem('lumina_user', JSON.stringify(user));
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSessionLoading(false);
-    }
-  };
 
   useEffect(() => {
     if (currentUser) {
@@ -618,7 +637,6 @@ const App: React.FC = () => {
                        </div>
                     </div>
                     
-                    {/* Bio and Info Section */}
                     <div className="max-w-2xl space-y-6 mb-12">
                        <p className="text-gray-700 dark:text-gray-300 font-medium leading-relaxed text-lg italic border-l-4 border-brand-primary pl-4 py-1">
                           {currentUser.bio || "No light shared in the bio yet..."}
