@@ -62,13 +62,12 @@ const App: React.FC = () => {
   const STORY_TTL = 24 * 60 * 60 * 1000;
 
   useEffect(() => {
-    // Safety timeout: If authentication check takes more than 5 seconds, force show login page
+    // Safety timeout for initial splash screen
     const safetyTimer = setTimeout(() => {
       if (sessionLoading) {
-        console.warn("Session check timed out. Forcing UI to load.");
         setSessionLoading(false);
       }
-    }, 5000);
+    }, 6000);
 
     const initializeAuth = async () => {
       try {
@@ -79,7 +78,6 @@ const App: React.FC = () => {
           setSessionLoading(false);
         }
       } catch (err) {
-        console.error("Auth init error:", err);
         setSessionLoading(false);
       }
     };
@@ -107,10 +105,9 @@ const App: React.FC = () => {
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .maybeSingle(); // Use maybeSingle to prevent fatal error if profile missing
+        .maybeSingle();
 
       if (error || !data) {
-        console.warn("Profile not found or error:", error);
         setSessionLoading(false);
         return;
       }
@@ -129,12 +126,89 @@ const App: React.FC = () => {
       };
       setCurrentUser(user);
     } catch (err) {
-      console.error("Fetch profile catch error:", err);
+      console.error("Fetch profile error:", err);
     } finally {
       setSessionLoading(false);
     }
   };
 
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setIsSubmittingAuth(true);
+
+    // Sanitize mobile number (remove spaces, dashes, etc)
+    const sanitizedMobile = authFormData.mobile.trim().replace(/[^0-9]/g, '');
+    if (sanitizedMobile.length < 5) {
+      setAuthError('Please enter a valid mobile number');
+      setIsSubmittingAuth(false);
+      return;
+    }
+
+    const proxyEmail = `${sanitizedMobile}@lumina.app`;
+    
+    // Safety timeout for auth submission (10 seconds)
+    const timeoutId = setTimeout(() => {
+      if (isSubmittingAuth) {
+        setIsSubmittingAuth(false);
+        setAuthError('Request timed out. Please check your internet and try again.');
+      }
+    }, 12000);
+
+    try {
+      if (isRegistering) {
+        if (authFormData.password !== authFormData.confirmPassword) {
+          setAuthError('Passwords do not match');
+          clearTimeout(timeoutId);
+          setIsSubmittingAuth(false);
+          return;
+        }
+
+        const { data, error } = await supabase.auth.signUp({
+          email: proxyEmail,
+          password: authFormData.password,
+        });
+
+        if (error) {
+          setAuthError(error.message);
+        } else if (data.user) {
+          const username = authFormData.fullName.toLowerCase().replace(/\s+/g, '_') + Math.floor(Math.random() * 100);
+          const { error: profileError } = await supabase.from('profiles').insert({
+            id: data.user.id,
+            username,
+            full_name: authFormData.fullName,
+            mobile: sanitizedMobile,
+            dob: authFormData.dob,
+            avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`
+          });
+          
+          if (profileError) {
+            setAuthError('Account created but profile setup failed. Please try logging in.');
+          } else {
+            await fetchProfile(data.user.id);
+          }
+        }
+      } else {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: proxyEmail,
+          password: authFormData.password,
+        });
+
+        if (error) {
+          setAuthError('Invalid credentials. Please check your number and password.');
+        } else if (data.user) {
+          await fetchProfile(data.user.id);
+        }
+      }
+    } catch (err) {
+      setAuthError("Connection error. Please try again later.");
+    } finally {
+      clearTimeout(timeoutId);
+      setIsSubmittingAuth(false);
+    }
+  };
+
+  // Rest of the application logic... (posts, chat, stories, etc)
   useEffect(() => {
     const searchUsers = async () => {
       const query = chatSearchQuery.trim();
@@ -142,7 +216,6 @@ const App: React.FC = () => {
         setChatSearchResults([]);
         return;
       }
-
       setIsSearchingChat(true);
       try {
         const { data, error } = await supabase
@@ -151,7 +224,6 @@ const App: React.FC = () => {
           .or(`full_name.ilike.%${query}%,username.ilike.%${query}%,mobile.ilike.%${query}%`)
           .neq('id', currentUser?.id)
           .limit(12);
-
         if (!error && data) {
           setChatSearchResults(data.map(u => ({
             id: u.id,
@@ -165,21 +237,16 @@ const App: React.FC = () => {
             website: u.website
           })));
         }
-      } catch (err) {
-        console.error("Search error:", err);
       } finally {
         setIsSearchingChat(false);
       }
     };
-
     const timer = setTimeout(searchUsers, 350);
     return () => clearTimeout(timer);
   }, [chatSearchQuery, currentUser?.id]);
 
   useEffect(() => {
-    if (chatEndRef.current) {
-      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
+    if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
 
   useEffect(() => {
@@ -335,33 +402,6 @@ const App: React.FC = () => {
     }
   };
 
-  const handleAuthSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError('');
-    setIsSubmittingAuth(true);
-    const proxyEmail = `${authFormData.mobile}@lumina.app`;
-    try {
-      if (isRegistering) {
-        if (authFormData.password !== authFormData.confirmPassword) { setAuthError('Passwords do not match'); setIsSubmittingAuth(false); return; }
-        const { data, error } = await supabase.auth.signUp({ email: proxyEmail, password: authFormData.password });
-        if (error) setAuthError(error.message);
-        else if (data.user) {
-          const username = authFormData.fullName.toLowerCase().replace(/\s+/g, '_') + Math.floor(Math.random() * 100);
-          await supabase.from('profiles').insert({ id: data.user.id, username, full_name: authFormData.fullName, mobile: authFormData.mobile, dob: authFormData.dob, avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}` });
-          await fetchProfile(data.user.id);
-        }
-      } else {
-        const { data, error } = await supabase.auth.signInWithPassword({ email: proxyEmail, password: authFormData.password });
-        if (error) setAuthError('Invalid credentials');
-        else if (data.user) await fetchProfile(data.user.id);
-      }
-    } catch (err) {
-      setAuthError("An unexpected error occurred.");
-    } finally {
-      setIsSubmittingAuth(false);
-    }
-  };
-
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut();
@@ -411,7 +451,7 @@ const App: React.FC = () => {
       <div className="w-full md:w-1/2 flex items-center justify-center p-6 md:p-12 z-10">
         <div className="w-full max-w-md space-y-10">
           <h1 className="brand-font text-6xl md:text-7xl font-bold brand-text-gradient mb-2 text-center md:text-left">Lumina</h1>
-          {authError && <div className="bg-red-50 text-red-600 p-5 rounded-[1.5rem] text-sm font-bold border border-red-100">{authError}</div>}
+          {authError && <div className="bg-red-50 text-red-600 p-5 rounded-[1.5rem] text-sm font-bold border border-red-100 animate-in fade-in slide-in-from-top-2">{authError}</div>}
           <form onSubmit={handleAuthSubmit} className="space-y-4">
             {isRegistering && (
               <>
@@ -422,7 +462,7 @@ const App: React.FC = () => {
             <input type="tel" placeholder="Mobile Number" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none" value={authFormData.mobile} onChange={(e) => setAuthFormData({...authFormData, mobile: e.target.value})} />
             <input type="password" placeholder="Password" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none" value={authFormData.password} onChange={(e) => setAuthFormData({...authFormData, password: e.target.value})} />
             {isRegistering && <input type="password" placeholder="Confirm Password" required className="w-full px-6 py-5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-800 rounded-[1.5rem] outline-none" value={authFormData.confirmPassword} onChange={(e) => setAuthFormData({...authFormData, confirmPassword: e.target.value})} />}
-            <button type="submit" disabled={isSubmittingAuth} className="w-full bg-brand-gradient text-white py-5 rounded-[1.5rem] font-black shadow-xl">
+            <button type="submit" disabled={isSubmittingAuth} className="w-full bg-brand-gradient text-white py-5 rounded-[1.5rem] font-black shadow-xl disabled:opacity-70 transition-all active:scale-[0.98]">
               {isSubmittingAuth ? 'Processing...' : (isRegistering ? 'Create Account' : 'Sign In')}
             </button>
           </form>
