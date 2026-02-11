@@ -5,7 +5,7 @@ import { ICONS } from '../constants';
 
 interface CreatePostModalProps {
   onClose: () => void;
-  onPost: (imageUrl: string, caption: string) => void;
+  onPost: (imageUrl: string, caption: string) => Promise<void>;
 }
 
 const CreatePostModal: React.FC<CreatePostModalProps> = ({ onClose, onPost }) => {
@@ -13,6 +13,9 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ onClose, onPost }) =>
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [caption, setCaption] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [magicPrompt, setMagicPrompt] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -46,21 +49,94 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ onClose, onPost }) =>
     setIsGenerating(false);
   };
 
-  const handleSubmit = () => {
-    if (selectedImage) {
-      onPost(selectedImage, caption);
-      onClose();
+  const handleSubmit = async () => {
+    if (!selectedImage || isUploading) return;
+
+    setIsUploading(true);
+    
+    // Simulate progress bar movement
+    const interval = setInterval(() => {
+      setUploadProgress(prev => {
+        if (prev >= 90) {
+          clearInterval(interval);
+          return 90;
+        }
+        return prev + 10;
+      });
+    }, 100);
+
+    try {
+      await onPost(selectedImage, caption);
+      
+      clearInterval(interval);
+      setUploadProgress(100);
+      
+      // Short delay to show 100%
+      setTimeout(() => {
+        setIsUploading(false);
+        setShowSuccess(true);
+        
+        // Final close after showing success message
+        setTimeout(() => {
+          onClose();
+        }, 2000);
+      }, 300);
+      
+    } catch (error) {
+      console.error("Upload failed", error);
+      setIsUploading(false);
+      clearInterval(interval);
+      setUploadProgress(0);
+      alert("Failed to share moment. Please try again.");
     }
   };
 
   return (
     <div className="fixed inset-0 z-[250] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-      <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-[2.5rem] overflow-hidden animate-in fade-in zoom-in duration-300 shadow-2xl">
+      <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-[2.5rem] overflow-hidden animate-in fade-in zoom-in duration-300 shadow-2xl relative">
+        
+        {/* Upload Progress Bar */}
+        {isUploading && (
+          <div className="absolute top-0 left-0 right-0 h-1.5 bg-gray-100 dark:bg-slate-800 z-[300]">
+            <div 
+              className="h-full bg-brand-gradient transition-all duration-300 ease-out"
+              style={{ width: `${uploadProgress}%` }}
+            ></div>
+          </div>
+        )}
+
+        {/* Success Overlay */}
+        {showSuccess && (
+          <div className="absolute inset-0 z-[400] bg-white dark:bg-slate-900 flex flex-col items-center justify-center animate-in fade-in zoom-in duration-500">
+            <div className="w-24 h-24 bg-green-500 rounded-full flex items-center justify-center text-white mb-6 shadow-xl animate-bounce">
+              <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M5 13l4 4L19 7"></path>
+              </svg>
+            </div>
+            <h2 className="text-2xl font-black text-gray-900 dark:text-gray-100 tracking-tight">Moment Shared!</h2>
+            <p className="text-gray-400 font-bold text-sm mt-2 uppercase tracking-widest">Your light is now glowing</p>
+          </div>
+        )}
+
         <div className="flex items-center justify-between p-5 border-b border-gray-50 dark:border-slate-800">
-          <button onClick={onClose} className="text-sm font-bold text-gray-400 dark:text-gray-500 hover:text-gray-600 px-2">Cancel</button>
-          <h2 className="font-bold text-gray-900 dark:text-gray-100 tracking-tight">Create Post</h2>
+          <button 
+            onClick={onClose} 
+            disabled={isUploading}
+            className="text-sm font-bold text-gray-400 dark:text-gray-500 hover:text-gray-600 px-2 disabled:opacity-30"
+          >
+            Cancel
+          </button>
+          <h2 className="font-bold text-gray-900 dark:text-gray-100 tracking-tight">
+            {isUploading ? 'Spreading Light...' : 'Create Post'}
+          </h2>
           {step === 2 ? (
-            <button onClick={handleSubmit} className="text-sm font-bold text-brand-primary dark:text-brand-secondary px-2 hover:brightness-110">Share</button>
+            <button 
+              onClick={handleSubmit} 
+              disabled={isUploading}
+              className="text-sm font-bold text-brand-primary dark:text-brand-secondary px-2 hover:brightness-110 disabled:opacity-30"
+            >
+              Share
+            </button>
           ) : (
             <div className="w-12"></div>
           )}
@@ -108,14 +184,20 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ onClose, onPost }) =>
             <div className="space-y-5">
               <div className="aspect-square bg-gray-50 dark:bg-slate-950 rounded-[1.5rem] overflow-hidden border border-gray-100 dark:border-slate-800 shadow-sm relative group">
                 <img src={selectedImage!} className="w-full h-full object-cover" />
-                <button onClick={() => setStep(1)} className="absolute top-4 right-4 bg-black/60 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
+                <button 
+                  onClick={() => setStep(1)} 
+                  disabled={isUploading}
+                  className="absolute top-4 right-4 bg-black/60 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity disabled:hidden"
+                >
+                  ✕
+                </button>
               </div>
               <div className="space-y-3">
                 <div className="flex justify-between items-center px-1">
                   <label className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em]">Storytelling</label>
                   <button 
                     onClick={handleSuggestCaption}
-                    disabled={isGenerating}
+                    disabled={isGenerating || isUploading}
                     className="text-xs font-bold text-brand-primary dark:text-brand-secondary flex items-center space-x-1.5 hover:brightness-90 transition-all disabled:opacity-50"
                   >
                     <ICONS.Magic className="w-4 h-4" />
@@ -124,7 +206,8 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ onClose, onPost }) =>
                 </div>
                 <textarea
                   placeholder="Tell the story behind this light..."
-                  className="w-full p-5 bg-gray-50 dark:bg-slate-800 dark:text-white border border-gray-100 dark:border-slate-700 rounded-[1.5rem] text-sm h-36 focus:ring-2 focus:ring-brand-primary focus:outline-none transition-all placeholder:text-gray-300 font-medium leading-relaxed"
+                  disabled={isUploading}
+                  className="w-full p-5 bg-gray-50 dark:bg-slate-800 dark:text-white border border-gray-100 dark:border-slate-700 rounded-[1.5rem] text-sm h-36 focus:ring-2 focus:ring-brand-primary focus:outline-none transition-all placeholder:text-gray-300 font-medium leading-relaxed disabled:opacity-50"
                   value={caption}
                   onChange={(e) => setCaption(e.target.value)}
                 />

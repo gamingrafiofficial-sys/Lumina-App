@@ -112,7 +112,10 @@ const App: React.FC = () => {
           mobile: data.mobile,
           avatar: data.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.username}`,
           coverPhoto: data.cover_photo_url || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop',
-          bio: data.bio || "Sharing light on Lumina ✨"
+          bio: data.bio || "Sharing light on Lumina ✨",
+          work: data.work,
+          location: data.location,
+          website: data.website
         });
       } else {
         // Auto-create a fallback profile if it doesn't exist in the database table
@@ -499,19 +502,71 @@ const App: React.FC = () => {
                   <div className="px-6 md:px-12 pb-12 -mt-16 relative z-10">
                     <img src={currentUser.avatar} className="w-32 h-32 md:w-40 md:h-40 rounded-[2.5rem] border-8 border-white dark:border-slate-900 shadow-2xl object-cover bg-white mb-6" />
                     <div className="flex flex-col md:flex-row md:items-end md:justify-between mb-8">
-                       <div>
+                       <div className="flex-1">
                           <h2 className="text-4xl font-black tracking-tighter mb-1">{currentUser.fullName}</h2>
-                          <p className="text-brand-primary font-black uppercase tracking-widest text-sm">@{currentUser.username}</p>
+                          <p className="text-brand-primary font-black uppercase tracking-widest text-sm mb-4">@{currentUser.username}</p>
+                          
+                          {/* Bio Display */}
+                          <p className="text-gray-700 dark:text-gray-300 text-sm font-medium leading-relaxed max-w-lg mb-6 whitespace-pre-wrap">
+                            {currentUser.bio || "This user is still finding their light... ✨"}
+                          </p>
+
+                          {/* Metadata Links/Icons */}
+                          <div className="flex flex-wrap gap-4 text-gray-500 dark:text-gray-400">
+                            {currentUser.work && (
+                              <div className="flex items-center space-x-1.5 bg-gray-50 dark:bg-slate-800 px-3 py-1.5 rounded-full border dark:border-slate-700">
+                                <ICONS.Briefcase className="w-3.5 h-3.5" />
+                                <span className="text-[11px] font-bold">{currentUser.work}</span>
+                              </div>
+                            )}
+                            {currentUser.location && (
+                              <div className="flex items-center space-x-1.5 bg-gray-50 dark:bg-slate-800 px-3 py-1.5 rounded-full border dark:border-slate-700">
+                                <ICONS.MapPin className="w-3.5 h-3.5" />
+                                <span className="text-[11px] font-bold">{currentUser.location}</span>
+                              </div>
+                            )}
+                            {currentUser.website && (
+                              <a href={currentUser.website.startsWith('http') ? currentUser.website : `https://${currentUser.website}`} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-1.5 bg-brand-primary/5 text-brand-primary px-3 py-1.5 rounded-full border border-brand-primary/10 hover:bg-brand-primary/10 transition-colors">
+                                <ICONS.Link className="w-3.5 h-3.5" />
+                                <span className="text-[11px] font-bold truncate max-w-[150px]">{currentUser.website.replace(/^https?:\/\//, '')}</span>
+                              </a>
+                            )}
+                          </div>
                        </div>
-                       <div className="flex space-x-2 mt-6 md:mt-0">
-                         <button onClick={() => setShowEditProfileModal(true)} className="px-8 py-3.5 bg-brand-gradient text-white rounded-2xl font-black text-sm shadow-xl active:scale-95 transition-transform">Edit Identity</button>
+                       
+                       <div className="flex space-x-2 mt-8 md:mt-0">
+                         <button onClick={() => setShowEditProfileModal(true)} className="px-8 py-3.5 bg-brand-gradient text-white rounded-2xl font-black text-sm shadow-xl active:scale-95 transition-transform whitespace-nowrap">Edit Identity</button>
                          <button onClick={handleLogout} className="p-3.5 bg-gray-100 dark:bg-slate-800 rounded-2xl active:scale-95 transition-transform hover:bg-red-50 dark:hover:bg-red-900/10 group"><svg className="w-6 h-6 text-gray-400 group-hover:text-red-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth="2.5" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg></button>
                        </div>
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                      {posts.filter(p => p.user.id === currentUser.id).map(p => (
-                        <div key={p.id} onClick={() => setSelectedPostDetail(p)} className="aspect-square rounded-2xl overflow-hidden cursor-pointer border dark:border-slate-800 hover:scale-[1.02] transition-transform shadow-sm"><img src={p.imageUrl} className="w-full h-full object-cover" /></div>
-                      ))}
+
+                    <div className="mt-12 pt-12 border-t dark:border-slate-800">
+                      <div className="flex items-center space-x-8 mb-8 px-2">
+                        <div className="text-center">
+                          <p className="text-xl font-black">{posts.filter(p => p.user.id === currentUser.id).length}</p>
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Posts</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xl font-black">1.2k</p>
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Followers</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xl font-black">840</p>
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Following</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {posts.filter(p => p.user.id === currentUser.id).map(p => (
+                          <div key={p.id} onClick={() => setSelectedPostDetail(p)} className="aspect-square rounded-2xl overflow-hidden cursor-pointer border dark:border-slate-800 hover:scale-[1.02] transition-transform shadow-sm group relative">
+                            <img src={p.imageUrl} className="w-full h-full object-cover" />
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                               <ICONS.Heart className="w-5 h-5 fill-current mr-2" />
+                               <span className="font-bold">{p.likes}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -523,9 +578,13 @@ const App: React.FC = () => {
           
           {showMenu && <Sidebar isOpen={showMenu} onClose={() => setShowMenu(false)} user={currentUser} onLogout={handleLogout} onThemeToggle={() => setTheme(theme === 'light' ? 'dark' : 'light')} onSavedClick={() => { setActiveTab('saved'); setShowMenu(false); }} currentTheme={theme} />}
           {showSearchModal && <SearchModal isOpen={showSearchModal} onClose={() => setShowSearchModal(false)} searchQuery={searchQuery} onSearchChange={handleSearch} results={searchResults} isSearching={isSearching} onSelectUser={handleStartChat} />}
-          {showCreateModal && <CreatePostModal onClose={() => setShowCreateModal(false)} onPost={async (img, cap) => { await supabase.from('posts').insert({ user_id: currentUser.id, image_url: img, caption: cap }); fetchPosts(); setActiveTab('home'); }} />}
+          {showCreateModal && <CreatePostModal onClose={() => setShowCreateModal(false)} onPost={async (img, cap) => { 
+            await supabase.from('posts').insert({ user_id: currentUser.id, image_url: img, caption: cap }); 
+            await fetchPosts(); 
+            setActiveTab('home'); 
+          }} />}
           {showCreateStoryModal && <CreateStoryModal onClose={() => setShowCreateStoryModal(false)} onPost={handlePostStory} />}
-          {showEditProfileModal && currentUser && <EditProfileModal user={currentUser} onClose={() => setShowEditProfileModal(false)} onUpdate={async (d) => { await supabase.from('profiles').update({ full_name: d.fullName, bio: d.bio, avatar_url: d.avatar, cover_photo_url: d.coverPhoto }).eq('id', currentUser.id); fetchProfile(currentUser.id); }} />}
+          {showEditProfileModal && currentUser && <EditProfileModal user={currentUser} onClose={() => setShowEditProfileModal(false)} onUpdate={async (d) => { await supabase.from('profiles').update({ full_name: d.fullName, bio: d.bio, work: d.work, location: d.location, website: d.website, avatar_url: d.avatar, cover_photo_url: d.coverPhoto }).eq('id', currentUser.id); fetchProfile(currentUser.id); }} />}
           {activeStory && <StoryViewer story={activeStory} onClose={() => setActiveStory(null)} />}
           {selectedPostDetail && <PostDetailModal post={selectedPostDetail} currentUser={currentUser} onClose={() => setSelectedPostDetail(null)} onLike={handleLike} onSave={() => {}} onOpenComments={setViewingCommentsPost} />}
           {viewingCommentsPost && <CommentPage post={viewingCommentsPost} currentUser={currentUser} onClose={() => setViewingCommentsPost(null)} onAddComment={async (pid, txt) => { await supabase.from('comments').insert({ post_id: pid, user_id: currentUser.id, text: txt }); }} />}
